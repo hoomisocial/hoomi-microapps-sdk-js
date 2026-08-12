@@ -1,0 +1,10 @@
+{
+  "name": "a frame from a different protocol major is rejected",
+  "protocol": 1,
+  "raw": "{\"v\": 2, \"id\": \"c-3\", \"type\": \"call\", \"method\": \"ui.toast\", \"n\": \"test-nonce\", \"e\": 1}",
+  "expect": {
+    "ok": false,
+    "errorCode": "E_PROTOCOL",
+    "id": "c-3"
+  }
+}

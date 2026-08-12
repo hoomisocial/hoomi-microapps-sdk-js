@@ -1,0 +1,10 @@
+{
+  "name": "a valid id is echoed back so the caller's promise can settle",
+  "protocol": 1,
+  "raw": "{\"v\": 1, \"id\": \"c-4\", \"type\": \"call\", \"method\": \"NOT A METHOD\", \"n\": \"test-nonce\", \"e\": 1}",
+  "expect": {
+    "ok": false,
+    "errorCode": "E_PROTOCOL",
+    "id": "c-4"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "name": "unparseable JSON is rejected without an id to echo",
+  "protocol": 1,
+  "raw": "{not json",
+  "expect": {
+    "ok": false,
+    "errorCode": "E_PROTOCOL",
+    "id": null
+  }
+}

@@ -1,0 +1,75 @@
+{
+  "name": "hoomi.microapps.js",
+  "version": "0.1.0",
+  "description": "JavaScript SDK for Hoomi micro-apps: typed bridge to the Hoomi superapp host over the WebView bridge, with React bindings, a mock host, and testing helpers.",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "files": [
+    "dist"
+  ],
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./react": {
+      "types": "./dist/react/index.d.ts",
+      "import": "./dist/react.js",
+      "require": "./dist/react.cjs"
+    },
+    "./mock": {
+      "types": "./dist/mock/index.d.ts",
+      "import": "./dist/mock.js",
+      "require": "./dist/mock.cjs"
+    },
+    "./testing": {
+      "types": "./dist/testing/index.d.ts",
+      "import": "./dist/testing.js",
+      "require": "./dist/testing.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json --noEmit && vite build && vite build --config vite.iife.config.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "size": "node scripts/size.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "peerDependencies": {
+    "react": "^18.0.0 || ^19.0.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@testing-library/react": "^16.3.0",
+    "@types/node": "^22.15.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "esbuild": "^0.25.0",
+    "fast-check": "^4.1.0",
+    "jsdom": "^26.1.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "typescript": "~5.8.3",
+    "vite": "^6.3.5",
+    "vite-plugin-dts": "^4.5.4",
+    "vitest": "^3.2.4"
+  },
+  "keywords": [
+    "hoomi",
+    "microapp",
+    "mini-program",
+    "webview",
+    "bridge",
+    "superapp"
+  ]
+}

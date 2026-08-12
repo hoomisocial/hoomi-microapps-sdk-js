@@ -1,0 +1,15 @@
+{
+  "name": "emoji and separators survive decoding intact",
+  "protocol": 1,
+  "raw": "{\"v\": 1, \"id\": \"c-8\", \"type\": \"call\", \"method\": \"storage.set\", \"params\": {\"key\": \"k\", \"value\": \"pay \\ud83c\\udf89 now\\u2028next\"}, \"n\": \"test-nonce\", \"e\": 1}",
+  "expect": {
+    "ok": true,
+    "id": "c-8",
+    "method": "storage.set",
+    "epoch": 1,
+    "params": {
+      "key": "k",
+      "value": "pay 🎉 now next"
+    }
+  }
+}

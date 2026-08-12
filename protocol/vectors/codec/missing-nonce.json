@@ -1,0 +1,10 @@
+{
+  "name": "a frame without a nonce is rejected",
+  "protocol": 1,
+  "raw": "{\"v\": 1, \"id\": \"c-5\", \"type\": \"call\", \"method\": \"ui.toast\", \"e\": 1}",
+  "expect": {
+    "ok": false,
+    "errorCode": "E_PROTOCOL",
+    "id": "c-5"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "an omitted params object decodes to an empty map",
+  "protocol": 1,
+  "raw": "{\"v\": 1, \"id\": \"c-2\", \"type\": \"call\", \"method\": \"ui.toast\", \"n\": \"test-nonce\", \"e\": 1}",
+  "expect": {
+    "ok": true,
+    "id": "c-2",
+    "method": "ui.toast",
+    "epoch": 1,
+    "params": {}
+  }
+}

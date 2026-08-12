@@ -1,0 +1,14 @@
+{
+  "name": "a well-formed call decodes to its parts",
+  "protocol": 1,
+  "raw": "{\"v\": 1, \"id\": \"c-1\", \"type\": \"call\", \"method\": \"user.getProfile\", \"params\": {\"a\": 1}, \"n\": \"test-nonce\", \"e\": 1}",
+  "expect": {
+    "ok": true,
+    "id": "c-1",
+    "method": "user.getProfile",
+    "epoch": 1,
+    "params": {
+      "a": 1
+    }
+  }
+}

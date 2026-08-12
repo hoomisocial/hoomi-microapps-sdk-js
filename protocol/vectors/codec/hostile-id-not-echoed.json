@@ -1,0 +1,10 @@
+{
+  "name": "an id outside the safe charset is not echoed back",
+  "protocol": 1,
+  "raw": "{\"v\": 1, \"id\": \"c-1\\\";alert(1)//\", \"type\": \"call\", \"method\": \"ui.toast\", \"n\": \"test-nonce\", \"e\": 1}",
+  "expect": {
+    "ok": false,
+    "errorCode": "E_PROTOCOL",
+    "id": null
+  }
+}

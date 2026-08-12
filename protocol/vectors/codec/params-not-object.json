@@ -1,0 +1,10 @@
+{
+  "name": "a non-object params value is rejected",
+  "protocol": 1,
+  "raw": "{\"v\": 1, \"id\": \"c-7\", \"type\": \"call\", \"method\": \"ui.toast\", \"params\": [1, 2], \"n\": \"test-nonce\", \"e\": 1}",
+  "expect": {
+    "ok": false,
+    "errorCode": "E_INVALID_PARAMS",
+    "id": "c-7"
+  }
+}
