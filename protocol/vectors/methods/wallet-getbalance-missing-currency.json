@@ -1,0 +1,7 @@
+{
+  "name": "wallet.getBalance requires an explicit currency (no implicit default)",
+  "protocol": 1,
+  "method": "wallet.getBalance",
+  "params": {},
+  "expect": { "ok": false, "errorCode": "E_INVALID_PARAMS" }
+}

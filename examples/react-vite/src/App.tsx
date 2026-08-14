@@ -170,16 +170,21 @@ function Payment() {
     try {
       const payment = await hoomi.wallet.requestPayment(
         {
-          amount: 48_000,
+          // Integer minor units — Rp 48.000 is 4_800_000 sen, never 48_000.5.
+          amountMinor: 4_800_000,
           currency: 'IDR',
+          // payeeRef says who receives the money; orderId is our own reference.
+          payeeRef: 'merchant:hoomi-cafe',
           orderId: `order-${Date.now()}`,
           description: '2× flat white, 1× croissant',
         },
         { timeoutMs: 15_000 },
       );
       setLast(payment);
-      const balance = await hoomi.wallet.getBalance();
-      setState(`✅ ${payment.status} (${payment.paymentId}) — balance ${balance.amount.toLocaleString()} ${balance.currency}`);
+      const balance = await hoomi.wallet.getBalance({ currency: 'IDR' });
+      setState(
+        `✅ ${payment.status} (${payment.paymentId}) — balance ${balance.amountMinor.toLocaleString()} ${balance.currency}`,
+      );
       await hoomi.ui.toast('Payment complete. Terima kasih!');
     } catch (err) {
       if (err instanceof UserCancelledError) setState('payment cancelled by user');

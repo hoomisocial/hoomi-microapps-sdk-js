@@ -184,27 +184,63 @@ export interface RecordingResult {
 // wallet
 // ---------------------------------------------------------------------------
 
-export interface WalletBalance {
+export interface GetBalanceParams {
+  /**
+   * Currency to report the balance in. Required and explicit: a wallet can
+   * hold more than one, and an implicit "default currency" is a guess the
+   * host is not entitled to make on the micro-app's behalf.
+   */
   currency: string;
-  /** Minor units (cents). */
-  amount: number;
+}
+
+export interface WalletBalance {
+  /**
+   * Integer minor units (sen for IDR, cents for USD). The field is named
+   * `amountMinor`, never `amount`, because an ambiguous name is exactly what
+   * lets a float onto a money path.
+   */
+  amountMinor: number;
+  currency: string;
   [key: string]: unknown;
 }
 
 export interface RequestPaymentParams {
-  /** Minor units (cents). */
-  amount: number;
+  /**
+   * Integer minor units, >= 1. NEVER a float — JSON has no integer type, so
+   * `2500.5` decodes as a double and truncating it on a payment path is a
+   * defect, not a rounding question. The SDK rejects a non-integer before it
+   * reaches the wire.
+   */
+  amountMinor: number;
   currency: string;
-  orderId: string;
+  /**
+   * Who gets paid. Required, and a different concept from `orderId`: this
+   * identifies the payee, not the caller's own bookkeeping reference.
+   */
+  payeeRef: string;
+  /** The micro-app's own order reference, echoed back on the result. */
+  orderId?: string;
   description?: string;
-  metadata?: Record<string, JsonValue>;
 }
 
-export type PaymentStatus = 'pending' | 'authorized' | 'completed' | 'failed' | 'refunded' | (string & {});
+/**
+ * Open-ended on purpose: a host that grows a status this SDK version has not
+ * heard of must not make consuming code throw. v1 hosts emit only the three
+ * named members.
+ */
+export type PaymentStatus = 'pending' | 'succeeded' | 'failed' | (string & {});
 
+/**
+ * The app-facing handle for a payment is `paymentId`. The host's idempotency
+ * key is derived from the session and is deliberately not returned here — it
+ * is host-internal and a micro-app must never be able to replay it.
+ */
 export interface PaymentResult {
   paymentId: string;
   status: PaymentStatus;
+  amountMinor?: number;
+  currency?: string;
+  orderId?: string;
   [key: string]: unknown;
 }
 

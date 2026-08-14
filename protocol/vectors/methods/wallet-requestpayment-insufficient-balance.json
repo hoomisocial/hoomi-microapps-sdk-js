@@ -1,0 +1,11 @@
+{
+  "name": "wallet.requestPayment reports insufficient funds as E_UNAVAILABLE with balance and requested",
+  "protocol": 1,
+  "method": "wallet.requestPayment",
+  "params": { "amountMinor": 999999999999, "currency": "IDR", "payeeRef": "merchant:88" },
+  "expect": {
+    "ok": false,
+    "errorCode": "E_UNAVAILABLE",
+    "errorData": { "requested": 999999999999 }
+  }
+}

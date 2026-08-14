@@ -53,21 +53,53 @@ describe('happy path built-ins', () => {
 
   it('payment flow: pay, balance decremented, status queryable', async () => {
     const { hoomi } = make();
-    const before = await hoomi.wallet.getBalance();
-    const payment = await hoomi.wallet.requestPayment({ amount: 250_000, currency: 'IDR', orderId: 'o-1' });
-    expect(payment.status).toBe('completed');
-    const after = await hoomi.wallet.getBalance();
-    expect(after.amount).toBe(before.amount - 250_000);
+    const before = await hoomi.wallet.getBalance({ currency: 'IDR' });
+    const payment = await hoomi.wallet.requestPayment({
+      amountMinor: 250_000,
+      currency: 'IDR',
+      payeeRef: 'merchant:88',
+      orderId: 'o-1',
+    });
+    expect(payment.status).toBe('succeeded');
+    const after = await hoomi.wallet.getBalance({ currency: 'IDR' });
+    expect(after.amountMinor).toBe(before.amountMinor - 250_000);
     const status = await hoomi.wallet.getPaymentStatus({ paymentId: payment.paymentId });
-    expect(status).toMatchObject({ paymentId: payment.paymentId, status: 'completed' });
+    expect(status).toMatchObject({
+      paymentId: payment.paymentId,
+      status: 'succeeded',
+      amountMinor: 250_000,
+      currency: 'IDR',
+      orderId: 'o-1',
+    });
+  });
+
+  it('the payment result never carries a host-internal idempotency key', async () => {
+    const { hoomi } = make();
+    const payment = await hoomi.wallet.requestPayment({
+      amountMinor: 1_000,
+      currency: 'IDR',
+      payeeRef: 'merchant:88',
+    });
+    expect(payment).not.toHaveProperty('idempotencyKey');
+    expect(payment).not.toHaveProperty('reference');
+    expect(payment).not.toHaveProperty('payeeRef');
   });
 
   it('rejects an invalid payment with E_INVALID_PARAMS', async () => {
     const { hoomi } = make();
     const err = await hoomi.wallet
-      .requestPayment({ amount: -5, currency: 'IDR', orderId: 'o-2' })
+      .requestPayment({ amountMinor: -5, currency: 'IDR', payeeRef: 'merchant:88', orderId: 'o-2' })
       .catch((e: unknown) => e);
     expect((err as HoomiError).code).toBe('E_INVALID_PARAMS');
+  });
+
+  it('insufficient balance is E_UNAVAILABLE carrying balance and requested', async () => {
+    const { hoomi } = make();
+    const err = await hoomi.wallet
+      .requestPayment({ amountMinor: 999_999_999, currency: 'IDR', payeeRef: 'merchant:88' })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(BridgeUnavailableError);
+    expect((err as HoomiError).data).toMatchObject({ balance: 12_500_000, requested: 999_999_999 });
   });
 
   it('jobs schedule/list/cancel', async () => {
@@ -117,7 +149,9 @@ describe('scenarios', () => {
 
   it('cancel-everything: interactive flows are E_USER_DENIED, confirm resolves false', async () => {
     const { hoomi } = make({ scenario: 'cancel-everything' });
-    const err = await hoomi.wallet.requestPayment({ amount: 1, currency: 'IDR', orderId: 'o' }).catch((e: unknown) => e);
+    const err = await hoomi.wallet
+      .requestPayment({ amountMinor: 1, currency: 'IDR', payeeRef: 'merchant:88' })
+      .catch((e: unknown) => e);
     expect(err).toBeInstanceOf(UserCancelledError);
     expect(await hoomi.ui.confirm('delete everything?')).toBe(false);
   });
@@ -133,7 +167,7 @@ describe('scenarios', () => {
   it('offline: network methods fail E_UNAVAILABLE, network status reports offline', async () => {
     const { hoomi } = make({ scenario: 'offline' });
     expect(await hoomi.system.getNetworkStatus()).toMatchObject({ online: false });
-    const err = await hoomi.wallet.getBalance().catch((e: unknown) => e);
+    const err = await hoomi.wallet.getBalance({ currency: 'IDR' }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(BridgeUnavailableError);
   });
 
@@ -235,9 +269,9 @@ describe('handle API', () => {
   it('fail() forces a method to a code until removed', async () => {
     const { hoomi, host } = make();
     const undo = host.fail('wallet.getBalance', 'E_UNAVAILABLE');
-    await expect(hoomi.wallet.getBalance()).rejects.toBeInstanceOf(BridgeUnavailableError);
+    await expect(hoomi.wallet.getBalance({ currency: 'IDR' })).rejects.toBeInstanceOf(BridgeUnavailableError);
     undo();
-    await expect(hoomi.wallet.getBalance()).resolves.toMatchObject({ currency: 'IDR' });
+    await expect(hoomi.wallet.getBalance({ currency: 'IDR' })).resolves.toMatchObject({ currency: 'IDR' });
   });
 
   it('waitFor resolves with the recorded call (past or future)', async () => {
@@ -258,7 +292,7 @@ describe('handle API', () => {
     host.revoke('wallet');
     await sleep(10);
     expect(hoomi.hasScope('wallet')).toBe(false);
-    await expect(hoomi.wallet.getBalance()).rejects.toBeInstanceOf(ScopeNotGrantedError);
+    await expect(hoomi.wallet.getBalance({ currency: 'IDR' })).rejects.toBeInstanceOf(ScopeNotGrantedError);
     host.grant('wallet');
     await sleep(10);
     expect(hoomi.hasScope('wallet')).toBe(true);

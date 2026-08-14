@@ -1,0 +1,7 @@
+{
+  "name": "wallet.getBalance rejects a non-string currency",
+  "protocol": 1,
+  "method": "wallet.getBalance",
+  "params": { "currency": 360 },
+  "expect": { "ok": false, "errorCode": "E_INVALID_PARAMS" }
+}

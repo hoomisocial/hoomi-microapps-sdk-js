@@ -1,0 +1,11 @@
+{
+  "name": "wallet.getBalance returns integer minor units in the requested currency",
+  "protocol": 1,
+  "method": "wallet.getBalance",
+  "params": { "currency": "IDR" },
+  "expect": {
+    "ok": true,
+    "result": { "currency": "IDR" },
+    "resultTypes": { "amountMinor": "number" }
+  }
+}

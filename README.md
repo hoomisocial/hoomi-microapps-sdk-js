@@ -34,9 +34,12 @@ await hoomi.storage.set('cart', { items: 3 });
 
 try {
   const payment = await hoomi.wallet.requestPayment({
-    amount: 250_000, currency: 'IDR', orderId: 'o-42',
+    amountMinor: 250_000,          // integer minor units, >= 1 — never a float
+    currency: 'IDR',
+    payeeRef: 'merchant:cafe-88',  // who gets paid (required)
+    orderId: 'o-42',               // your own reference (optional)
   }, { timeoutMs: 15_000 });
-  console.log(payment.status);
+  console.log(payment.status);     // 'pending' | 'succeeded' | 'failed'
 } catch (err) {
   if (err instanceof UserCancelledError) { /* user backed out — fine */ }
   else if (err instanceof PermissionDeniedError) {
@@ -60,6 +63,25 @@ Streams (`location.watch`, `ble.notifications`) return a `Subscription`:
 const sub = await hoomi.location.watch({ minIntervalMs: 2000 }, (pos) => draw(pos));
 await sub.close();
 ```
+
+### Wallet payloads (protocol v1)
+
+Money is **integer minor units**, and the field says so:
+
+| method | params | result |
+| --- | --- | --- |
+| `wallet.getBalance` | `{ currency }` — required, no implicit default | `{ amountMinor, currency }` |
+| `wallet.requestPayment` | `{ amountMinor, currency, payeeRef, orderId?, description? }` | `{ paymentId, status, amountMinor?, currency?, orderId? }` |
+| `wallet.getPaymentStatus` | `{ paymentId }` | same as `requestPayment` |
+
+`amountMinor` must be an integer ≥ 1; the SDK rejects a fractional value with
+`E_INVALID_PARAMS` **before** it reaches the wire, because JSON has no integer
+type and a truncated float on a payment path is a defect, not a rounding
+question. `payeeRef` (who is paid) is required and is not the same thing as
+`orderId` (your own reference). `status` is `'pending' | 'succeeded' |
+'failed'`, typed open-ended so an unrecognised status from a newer host does
+not throw. The host's idempotency key is derived from the session and is
+deliberately never returned — `paymentId` is the only app-facing handle.
 
 ### Error model
 
@@ -167,15 +189,19 @@ cd examples/react-vite && npm install && npm run dev
   timing) still get the launch payload.
 - Every call carries the session nonce and current epoch; `E_STALE_EPOCH`
   means the page was navigated while a call was in flight.
-- `protocol/vectors/codec/` is the shared conformance corpus, run by both this
-  repo (`test/protocol/conformance.test.ts`) and the Dart host. **Adding a
-  protocol method means adding a vector.**
+- `protocol/vectors/` is the shared conformance corpus, run by both this repo
+  (`test/protocol/`) and the Dart host. `codec/` covers the envelope;
+  `methods/` covers per-method params and results (see
+  `protocol/vectors/methods/README.md` for the vector format). **Adding or
+  changing a protocol method means adding a vector** — the wallet payload
+  drift between the two SDKs went unnoticed precisely because only the
+  envelope was covered.
 
 ## Development
 
 ```bash
 npm install
-npm test          # vitest: 149 tests incl. fast-check property tests
+npm test          # vitest: 181 tests incl. fast-check property tests + protocol vectors
 npm run build     # ESM+CJS multi-entry, IIFE global, .d.ts
 npm run size      # size + tree-shaking gate (core ≤ 12 KB min+gzip)
 ```

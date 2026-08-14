@@ -1,0 +1,23 @@
+{
+  "name": "wallet.getPaymentStatus returns the same shape as requestPayment",
+  "protocol": 1,
+  "setup": [
+    {
+      "method": "wallet.requestPayment",
+      "params": { "amountMinor": 250000, "currency": "IDR", "payeeRef": "merchant:88", "orderId": "o-42" },
+      "bind": { "paymentId": "paymentId" }
+    }
+  ],
+  "method": "wallet.getPaymentStatus",
+  "params": { "paymentId": "$paymentId" },
+  "expect": {
+    "ok": true,
+    "result": {
+      "status": "succeeded",
+      "amountMinor": 250000,
+      "currency": "IDR",
+      "orderId": "o-42"
+    },
+    "resultTypes": { "paymentId": "string" }
+  }
+}

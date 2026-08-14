@@ -229,6 +229,19 @@ interface ActiveSub {
   cleanup: (() => void) | undefined;
 }
 
+/**
+ * `payeeRef` is kept for realism but never leaves the host, and neither does
+ * an idempotency key: the app-facing handle for a payment is `paymentId`.
+ */
+interface StoredPayment {
+  paymentId: string;
+  status: string;
+  amountMinor: number;
+  currency: string;
+  orderId: string | undefined;
+  payeeRef: string;
+}
+
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 export class MockHost implements MockHostHandle {
@@ -264,7 +277,7 @@ export class MockHost implements MockHostHandle {
 
   #storage = new Map<string, JsonValue>();
   #balance = 12_500_000;
-  #payments = new Map<string, { paymentId: string; status: string; orderId: string; amount: number; currency: string }>();
+  #payments = new Map<string, StoredPayment>();
   #jobs = new Map<string, { jobId: string; name: string; runAt: number; payload?: Record<string, JsonValue> }>();
   #bleConnected = new Set<string>();
   #recordings = new Map<string, { recordingId: string; startedAt: number }>();
@@ -973,35 +986,46 @@ export class MockHost implements MockHostHandle {
       }
 
       // wallet -------------------------------------------------------------------
-      case 'wallet.getBalance':
-        return { currency: 'IDR', amount: this.#balance };
+      case 'wallet.getBalance': {
+        // Required and explicit — the mock will not invent a default currency
+        // for a caller that forgot to say which wallet it means.
+        const currency = this.#requireString(p, 'currency', method);
+        return { amountMinor: this.#balance, currency };
+      }
       case 'wallet.requestPayment': {
-        const amount = p['amount'];
-        const currency = p['currency'];
-        const orderId = p['orderId'];
-        if (typeof amount !== 'number' || !Number.isFinite(amount) || amount <= 0)
-          throw new WireFailure('E_INVALID_PARAMS', 'wallet.requestPayment requires a positive numeric "amount"');
-        if (typeof currency !== 'string' || currency.length === 0)
-          throw new WireFailure('E_INVALID_PARAMS', 'wallet.requestPayment requires "currency"');
-        if (typeof orderId !== 'string' || orderId.length === 0)
-          throw new WireFailure('E_INVALID_PARAMS', 'wallet.requestPayment requires "orderId"');
-        if (amount > this.#balance)
+        const amountMinor = p['amountMinor'];
+        // Integer minor units only. A float here is a defect on a money path,
+        // not something to round, so it is refused rather than truncated.
+        if (typeof amountMinor !== 'number' || !Number.isSafeInteger(amountMinor) || amountMinor < 1)
+          throw new WireFailure(
+            'E_INVALID_PARAMS',
+            `wallet.requestPayment requires an integer "amountMinor" >= 1 (minor units), got ${JSON.stringify(amountMinor)}`,
+          );
+        const currency = this.#requireString(p, 'currency', method);
+        // Who gets paid. Distinct from orderId, which is the caller's own
+        // reference and stays optional.
+        const payeeRef = this.#requireString(p, 'payeeRef', method);
+        const orderId = typeof p['orderId'] === 'string' && p['orderId'].length > 0 ? p['orderId'] : undefined;
+        if (amountMinor > this.#balance)
           throw new WireFailure('E_UNAVAILABLE', 'Insufficient mock wallet balance', false, {
             balance: this.#balance,
-            requested: amount,
+            requested: amountMinor,
           });
-        this.#balance -= amount;
+        this.#balance -= amountMinor;
         const paymentId = `pay-${++this.#seq}`;
-        const payment = { paymentId, status: 'completed', orderId, amount, currency };
-        this.#payments.set(paymentId, payment);
-        return { paymentId, status: 'completed' };
+        this.#payments.set(paymentId, {
+          paymentId,
+          status: 'succeeded',
+          amountMinor,
+          currency,
+          orderId,
+          payeeRef,
+        });
+        return this.#paymentView(paymentId);
       }
-      case 'wallet.getPaymentStatus': {
-        const paymentId = this.#requireString(p, 'paymentId', method);
-        const payment = this.#payments.get(paymentId);
-        if (!payment) throw new WireFailure('E_INVALID_PARAMS', `Unknown paymentId: ${paymentId}`);
-        return { paymentId: payment.paymentId, status: payment.status };
-      }
+      case 'wallet.getPaymentStatus':
+        // Same projection as requestPayment: the two results are one shape.
+        return this.#paymentView(this.#requireString(p, 'paymentId', method));
 
       // jobs ----------------------------------------------------------------------
       case 'jobs.schedule': {
@@ -1083,6 +1107,22 @@ export class MockHost implements MockHostHandle {
       default:
         throw new WireFailure('E_UNSUPPORTED', `Method ${method} is not supported by this host`);
     }
+  }
+
+  /**
+   * The wire-visible projection of a payment: exactly the v1 result shape.
+   * `payeeRef` and any host-internal idempotency key are deliberately absent.
+   */
+  #paymentView(paymentId: string): Record<string, unknown> {
+    const payment = this.#payments.get(paymentId);
+    if (!payment) throw new WireFailure('E_INVALID_PARAMS', `Unknown paymentId: ${paymentId}`);
+    return {
+      paymentId: payment.paymentId,
+      status: payment.status,
+      amountMinor: payment.amountMinor,
+      currency: payment.currency,
+      ...(payment.orderId !== undefined ? { orderId: payment.orderId } : {}),
+    };
   }
 
   #requireString(p: Record<string, unknown>, key: string, method: string): string {

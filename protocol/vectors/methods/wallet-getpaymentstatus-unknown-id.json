@@ -1,0 +1,7 @@
+{
+  "name": "wallet.getPaymentStatus rejects an unknown paymentId",
+  "protocol": 1,
+  "method": "wallet.getPaymentStatus",
+  "params": { "paymentId": "pay-does-not-exist" },
+  "expect": { "ok": false, "errorCode": "E_INVALID_PARAMS" }
+}

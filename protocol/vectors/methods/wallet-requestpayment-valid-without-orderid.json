@@ -1,0 +1,11 @@
+{
+  "name": "wallet.requestPayment works without an orderId (it is the caller's own, optional, reference)",
+  "protocol": 1,
+  "method": "wallet.requestPayment",
+  "params": { "amountMinor": 1, "currency": "IDR", "payeeRef": "merchant:88" },
+  "expect": {
+    "ok": true,
+    "result": { "status": "succeeded", "amountMinor": 1, "currency": "IDR" },
+    "resultTypes": { "paymentId": "string" }
+  }
+}

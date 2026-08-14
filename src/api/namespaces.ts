@@ -4,6 +4,7 @@
  */
 
 import type { BridgeClient, CallOptions, Subscription, SubscriptionObserver } from '../core/client.js';
+import { HoomiError } from '../core/errors.js';
 import type {
   AlertParams,
   BleCharacteristicParams,
@@ -19,6 +20,7 @@ import type {
   ConfirmParams,
   ConfirmResult,
   GeoPosition,
+  GetBalanceParams,
   GetIdTokenParams,
   GetPaymentStatusParams,
   IdTokenResult,
@@ -57,6 +59,41 @@ type Observer<T> = SubscriptionObserver<T> | ((data: T) => void);
 function toObserver<T>(observer: Observer<T>): SubscriptionObserver<unknown> {
   const o: SubscriptionObserver<T> = typeof observer === 'function' ? { next: observer } : observer;
   return o as SubscriptionObserver<unknown>;
+}
+
+function invalidParams(message: string): HoomiError {
+  return new HoomiError('E_INVALID_PARAMS', message);
+}
+
+function requireNonEmptyString(value: unknown, method: string, key: string): string {
+  if (typeof value !== 'string' || value.length === 0) {
+    throw invalidParams(`${method} requires a non-empty string "${key}"`);
+  }
+  return value;
+}
+
+/**
+ * Money is validated on this side of the bridge, not only on the host's.
+ *
+ * `amountMinor` must be a safe integer >= 1: JSON has no integer type, so a
+ * float reaches the host as a perfectly valid number and gets truncated on a
+ * payment path. Catching it here means the defect surfaces in the micro-app's
+ * own stack trace instead of as a mystery `E_INVALID_PARAMS` from the host —
+ * and, more importantly, the bad frame is never written at all.
+ */
+function assertRequestPaymentParams(params: RequestPaymentParams | undefined): void {
+  const p = params ?? ({} as RequestPaymentParams);
+  const amountMinor: unknown = p.amountMinor;
+  if (typeof amountMinor !== 'number' || !Number.isSafeInteger(amountMinor) || amountMinor < 1) {
+    throw invalidParams(
+      `wallet.requestPayment requires "amountMinor" to be an integer number of minor units >= 1 (got ${JSON.stringify(amountMinor)})`,
+    );
+  }
+  requireNonEmptyString(p.currency, 'wallet.requestPayment', 'currency');
+  // payeeRef is who gets paid; orderId is the caller's own reference and is
+  // optional. They are not interchangeable, so a missing payeeRef is fatal
+  // even when orderId is present.
+  requireNonEmptyString(p.payeeRef, 'wallet.requestPayment', 'payeeRef');
 }
 
 export interface LifecycleApi {
@@ -113,7 +150,13 @@ export interface AudioApi {
 }
 
 export interface WalletApi {
-  getBalance(opts?: CallOptions): Promise<WalletBalance>;
+  /** `currency` is required: the host does not guess a default. */
+  getBalance(params: GetBalanceParams, opts?: CallOptions): Promise<WalletBalance>;
+  /**
+   * `amountMinor` is integer minor units and `payeeRef` says who is paid.
+   * Both are validated page-side and reject with `E_INVALID_PARAMS` before
+   * anything is written to the bridge.
+   */
   requestPayment(params: RequestPaymentParams, opts?: CallOptions): Promise<PaymentResult>;
   getPaymentStatus(params: GetPaymentStatusParams, opts?: CallOptions): Promise<PaymentResult>;
 }
@@ -214,9 +257,20 @@ export function createApiNamespaces(client: BridgeClient): ApiNamespaces {
       cancelRecord: (params, opts) => callVoid('audio.cancelRecord', params ?? {}, opts),
     },
     wallet: {
-      getBalance: (opts) => call<WalletBalance>('wallet.getBalance', {}, opts),
-      requestPayment: (params, opts) => call<PaymentResult>('wallet.requestPayment', params, opts),
-      getPaymentStatus: (params, opts) => call<PaymentResult>('wallet.getPaymentStatus', params, opts),
+      // async so a validation failure rejects the returned promise rather
+      // than throwing synchronously out of the call expression.
+      getBalance: async (params, opts) => {
+        const currency = requireNonEmptyString(params?.currency, 'wallet.getBalance', 'currency');
+        return call<WalletBalance>('wallet.getBalance', { currency }, opts);
+      },
+      requestPayment: async (params, opts) => {
+        assertRequestPaymentParams(params);
+        return call<PaymentResult>('wallet.requestPayment', params, opts);
+      },
+      getPaymentStatus: async (params, opts) => {
+        const paymentId = requireNonEmptyString(params?.paymentId, 'wallet.getPaymentStatus', 'paymentId');
+        return call<PaymentResult>('wallet.getPaymentStatus', { paymentId }, opts);
+      },
     },
     jobs: {
       schedule: (params, opts) => call<ScheduleJobResult>('jobs.schedule', params, opts),

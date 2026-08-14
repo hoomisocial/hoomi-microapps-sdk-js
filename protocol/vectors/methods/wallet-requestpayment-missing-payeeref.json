@@ -1,0 +1,7 @@
+{
+  "name": "wallet.requestPayment requires payeeRef even when orderId is present",
+  "protocol": 1,
+  "method": "wallet.requestPayment",
+  "params": { "amountMinor": 250000, "currency": "IDR", "orderId": "o-42" },
+  "expect": { "ok": false, "errorCode": "E_INVALID_PARAMS" }
+}

@@ -1,0 +1,7 @@
+{
+  "name": "wallet.requestPayment rejects an empty payeeRef",
+  "protocol": 1,
+  "method": "wallet.requestPayment",
+  "params": { "amountMinor": 250000, "currency": "IDR", "payeeRef": "" },
+  "expect": { "ok": false, "errorCode": "E_INVALID_PARAMS" }
+}

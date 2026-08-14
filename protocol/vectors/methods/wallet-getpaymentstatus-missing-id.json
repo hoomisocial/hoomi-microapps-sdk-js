@@ -1,0 +1,7 @@
+{
+  "name": "wallet.getPaymentStatus requires paymentId",
+  "protocol": 1,
+  "method": "wallet.getPaymentStatus",
+  "params": {},
+  "expect": { "ok": false, "errorCode": "E_INVALID_PARAMS" }
+}

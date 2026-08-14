@@ -23,7 +23,7 @@ describe('SSR / non-browser environments', () => {
     expect(hoomi.isAvailable()).toBe(false);
     await expect(hoomi.ui.toast('hi')).rejects.toBeInstanceOf(BridgeUnavailableError);
     await expect(hoomi.ready()).rejects.toBeInstanceOf(BridgeUnavailableError);
-    const err = await hoomi.wallet.getBalance().catch((e: unknown) => e);
+    const err = await hoomi.wallet.getBalance({ currency: 'IDR' }).catch((e: unknown) => e);
     expect((err as BridgeUnavailableError).code).toBe('E_UNAVAILABLE');
     hoomi.dispose();
   });

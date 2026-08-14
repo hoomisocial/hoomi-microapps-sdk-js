@@ -1,0 +1,7 @@
+{
+  "name": "wallet.requestPayment rejects a zero amount",
+  "protocol": 1,
+  "method": "wallet.requestPayment",
+  "params": { "amountMinor": 0, "currency": "IDR", "payeeRef": "merchant:88" },
+  "expect": { "ok": false, "errorCode": "E_INVALID_PARAMS" }
+}

@@ -1,0 +1,22 @@
+{
+  "name": "wallet.requestPayment accepts integer minor units and echoes the order reference",
+  "protocol": 1,
+  "method": "wallet.requestPayment",
+  "params": {
+    "amountMinor": 250000,
+    "currency": "IDR",
+    "payeeRef": "merchant:88",
+    "orderId": "o-42",
+    "description": "2x flat white"
+  },
+  "expect": {
+    "ok": true,
+    "result": {
+      "status": "succeeded",
+      "amountMinor": 250000,
+      "currency": "IDR",
+      "orderId": "o-42"
+    },
+    "resultTypes": { "paymentId": "string" }
+  }
+}

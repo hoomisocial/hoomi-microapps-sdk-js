@@ -1,0 +1,7 @@
+{
+  "name": "wallet.requestPayment requires currency",
+  "protocol": 1,
+  "method": "wallet.requestPayment",
+  "params": { "amountMinor": 250000, "payeeRef": "merchant:88" },
+  "expect": { "ok": false, "errorCode": "E_INVALID_PARAMS" }
+}

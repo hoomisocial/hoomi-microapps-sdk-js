@@ -1,0 +1,7 @@
+{
+  "name": "wallet.requestPayment rejects a fractional amount",
+  "protocol": 1,
+  "method": "wallet.requestPayment",
+  "params": { "amountMinor": 2500.5, "currency": "IDR", "payeeRef": "merchant:88" },
+  "expect": { "ok": false, "errorCode": "E_INVALID_PARAMS" }
+}
