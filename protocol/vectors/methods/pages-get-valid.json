@@ -1,0 +1,11 @@
+{
+  "name": "pages.get returns the page object itself, not a wrapper",
+  "protocol": 1,
+  "method": "pages.get",
+  "params": { "pageId": 1 },
+  "expect": {
+    "ok": true,
+    "result": { "id": 1 },
+    "resultTypes": { "name": "string", "followers": "number" }
+  }
+}

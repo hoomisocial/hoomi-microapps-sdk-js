@@ -1,0 +1,10 @@
+{
+  "name": "pages.listProducts returns products under \"products\", each echoing its pageId",
+  "protocol": 1,
+  "method": "pages.listProducts",
+  "params": { "pageId": 1 },
+  "expect": {
+    "ok": true,
+    "result": { "products": [{ "pageId": 1 }] }
+  }
+}

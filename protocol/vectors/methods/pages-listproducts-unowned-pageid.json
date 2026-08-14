@@ -1,0 +1,7 @@
+{
+  "name": "pages.listProducts refuses an unowned page with E_SCOPE_DENIED, not an empty list",
+  "protocol": 1,
+  "method": "pages.listProducts",
+  "params": { "pageId": 999999 },
+  "expect": { "ok": false, "errorCode": "E_SCOPE_DENIED" }
+}

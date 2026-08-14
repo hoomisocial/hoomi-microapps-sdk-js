@@ -75,12 +75,19 @@ afterEach(() => {
 
 describe('per-method conformance corpus', () => {
   it('the corpus is present (drift alarm: do not let this list shrink)', () => {
-    expect(files.length).toBeGreaterThanOrEqual(17);
+    expect(files.length).toBeGreaterThanOrEqual(27);
   });
 
-  it('covers all three wallet methods', () => {
+  it('covers every method of every namespace that has vectors', () => {
     const methods = new Set(vectors.map(([, v]) => v.method));
-    expect([...methods].sort()).toEqual(['wallet.getBalance', 'wallet.getPaymentStatus', 'wallet.requestPayment']);
+    expect([...methods].sort()).toEqual([
+      'pages.get',
+      'pages.list',
+      'pages.listProducts',
+      'wallet.getBalance',
+      'wallet.getPaymentStatus',
+      'wallet.requestPayment',
+    ]);
   });
 
   for (const [file, vector] of vectors) {

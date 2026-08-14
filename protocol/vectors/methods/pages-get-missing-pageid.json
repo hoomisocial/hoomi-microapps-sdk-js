@@ -1,0 +1,7 @@
+{
+  "name": "pages.get requires a pageId",
+  "protocol": 1,
+  "method": "pages.get",
+  "params": {},
+  "expect": { "ok": false, "errorCode": "E_INVALID_PARAMS" }
+}

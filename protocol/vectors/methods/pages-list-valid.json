@@ -1,0 +1,10 @@
+{
+  "name": "pages.list returns the signed-in user's own pages under \"pages\"",
+  "protocol": 1,
+  "method": "pages.list",
+  "params": {},
+  "expect": {
+    "ok": true,
+    "result": { "pages": [{ "id": 1 }] }
+  }
+}

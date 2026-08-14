@@ -22,11 +22,16 @@ import type {
   GeoPosition,
   GetBalanceParams,
   GetIdTokenParams,
+  GetPageParams,
   GetPaymentStatusParams,
+  HoomiPage,
   IdTokenResult,
   JsonValue,
   ListIotDevicesResult,
   ListJobsResult,
+  ListPagesResult,
+  ListProductsParams,
+  ListProductsResult,
   LocationParams,
   LocationWatchParams,
   NetworkStatus,
@@ -94,6 +99,20 @@ function assertRequestPaymentParams(params: RequestPaymentParams | undefined): v
   // optional. They are not interchangeable, so a missing payeeRef is fatal
   // even when orderId is present.
   requireNonEmptyString(p.payeeRef, 'wallet.requestPayment', 'payeeRef');
+}
+
+/**
+ * `pageId` is a positive integer, validated page-side for the same reason
+ * `amountMinor` is: TypeScript cannot express "integer", so `1.5` type-checks
+ * and JSON has no integer type to catch it on the wire. The host rejects it
+ * with `E_INVALID_PARAMS` too — catching it here just means the defect
+ * surfaces in the micro-app's own stack trace instead of as a round trip.
+ */
+function requirePageId(value: unknown, method: string): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1) {
+    throw invalidParams(`${method} requires "pageId" to be a positive integer (got ${JSON.stringify(value)})`);
+  }
+  return value;
 }
 
 export interface LifecycleApi {
@@ -167,6 +186,27 @@ export interface JobsApi {
   list(opts?: CallOptions): Promise<ListJobsResult>;
 }
 
+/**
+ * The signed-in user's own storefront Pages, read-only.
+ *
+ * Seller-tool territory: a micro-app can read the stores *this user* runs and
+ * what they list on them. It cannot browse Hoomi — pages the user follows and
+ * anyone else's pages are not reachable here, which is why this is one modest
+ * consent row rather than a capability that could enumerate the catalogue.
+ */
+export interface PagesApi {
+  /** Every page the signed-in user owns. */
+  list(opts?: CallOptions): Promise<ListPagesResult>;
+  /**
+   * One owned page. `pageId` must be a positive integer (rejected page-side
+   * with `E_INVALID_PARAMS` otherwise); a well-formed id the user does not own
+   * answers `E_SCOPE_DENIED`, not "not found".
+   */
+  get(params: GetPageParams, opts?: CallOptions): Promise<HoomiPage>;
+  /** Products listed on an owned page. Same `pageId` rules as `get`. */
+  listProducts(params: ListProductsParams, opts?: CallOptions): Promise<ListProductsResult>;
+}
+
 export interface BleApi {
   requestDevice(params?: BleRequestDeviceParams, opts?: CallOptions): Promise<BleDevice>;
   connect(params: BleDeviceParams, opts?: CallOptions): Promise<void>;
@@ -194,6 +234,7 @@ export interface ApiNamespaces {
   audio: AudioApi;
   wallet: WalletApi;
   jobs: JobsApi;
+  pages: PagesApi;
   ble: BleApi;
   iot: IotApi;
 }
@@ -276,6 +317,19 @@ export function createApiNamespaces(client: BridgeClient): ApiNamespaces {
       schedule: (params, opts) => call<ScheduleJobResult>('jobs.schedule', params, opts),
       cancel: (params, opts) => callVoid('jobs.cancel', params, opts),
       list: (opts) => call<ListJobsResult>('jobs.list', {}, opts),
+    },
+    pages: {
+      list: (opts) => call<ListPagesResult>('pages.list', {}, opts),
+      // async so a validation failure rejects the returned promise rather
+      // than throwing synchronously out of the call expression.
+      get: async (params, opts) => {
+        const pageId = requirePageId(params?.pageId, 'pages.get');
+        return call<HoomiPage>('pages.get', { pageId }, opts);
+      },
+      listProducts: async (params, opts) => {
+        const pageId = requirePageId(params?.pageId, 'pages.listProducts');
+        return call<ListProductsResult>('pages.listProducts', { pageId }, opts);
+      },
     },
     ble: {
       requestDevice: (params, opts) => call<BleDevice>('ble.requestDevice', params ?? {}, opts),

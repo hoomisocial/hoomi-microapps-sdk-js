@@ -1,0 +1,7 @@
+{
+  "name": "pages.get rejects a negative pageId",
+  "protocol": 1,
+  "method": "pages.get",
+  "params": { "pageId": -1 },
+  "expect": { "ok": false, "errorCode": "E_INVALID_PARAMS" }
+}

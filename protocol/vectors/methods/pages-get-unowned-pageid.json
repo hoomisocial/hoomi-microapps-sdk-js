@@ -1,0 +1,7 @@
+{
+  "name": "pages.get refuses a page the signed-in user does not own with E_SCOPE_DENIED",
+  "protocol": 1,
+  "method": "pages.get",
+  "params": { "pageId": 999999 },
+  "expect": { "ok": false, "errorCode": "E_SCOPE_DENIED" }
+}

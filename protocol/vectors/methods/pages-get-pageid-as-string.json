@@ -1,0 +1,7 @@
+{
+  "name": "pages.get rejects a pageId sent as a string",
+  "protocol": 1,
+  "method": "pages.get",
+  "params": { "pageId": "1" },
+  "expect": { "ok": false, "errorCode": "E_INVALID_PARAMS" }
+}

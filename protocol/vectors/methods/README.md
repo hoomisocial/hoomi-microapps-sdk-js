@@ -62,3 +62,19 @@ exactly `"$name"` — there is no interpolation inside longer strings.
 
 Every vector runs against a **fresh** host, so vectors never depend on each
 other's ordering or on a shared balance.
+
+## Fixtures a runner must provide
+
+Most vectors create the state they need through `setup`. Read-only namespaces
+cannot: nothing a micro-app may call creates a storefront page, so the
+`pages.*` vectors pin the fixture instead. A runner's host must be seeded with:
+
+- exactly **one** page owned by the signed-in user, whose `id` is `1`, with a
+  `name` (string) and `followers` (number);
+- exactly **one** product listed on that page;
+- **no** page with id `999999` — that id stands for "somebody else's page",
+  and the expected answer for it is `E_SCOPE_DENIED`, never "not found".
+
+Only the ids are pinned. Names, prices, follower counts and product ids are the
+host's own data and no vector asserts them: pinning a literal there would pin
+*this* host's fixtures rather than the protocol.

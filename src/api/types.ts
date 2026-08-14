@@ -281,6 +281,79 @@ export interface ListJobsResult {
 }
 
 // ---------------------------------------------------------------------------
+// pages
+//
+// Read-only access to the **signed-in user's own** storefront Pages and the
+// Products listed on them: seller tools, a cross-posting helper, a catalogue
+// viewer. It is the viewing user's own commercial data.
+//
+// It is deliberately *not* a way to browse Hoomi. Pages the user merely
+// follows and pages belonging to anyone else are out of scope. That boundary
+// is what keeps this one modest consent row instead of a capability that could
+// enumerate the catalogue or harvest a follow graph.
+// ---------------------------------------------------------------------------
+
+/** One of the signed-in user's storefront pages. */
+export interface HoomiPage {
+  id: number;
+  /** The store name. */
+  name: string;
+  description?: string;
+  category?: string;
+  logoUrl?: string;
+  bannerUrl?: string;
+  followers: number;
+  [key: string]: unknown;
+}
+
+export interface ListPagesResult {
+  pages: HoomiPage[];
+}
+
+export interface GetPageParams {
+  /**
+   * Positive integer. Must be a page the signed-in user owns: any other id
+   * answers `E_SCOPE_DENIED`, whether or not that page exists — the host will
+   * not let this method become an enumeration oracle over every Page in Hoomi.
+   */
+  pageId: number;
+}
+
+/** A product listed on one of the signed-in user's pages. */
+export interface HoomiProduct {
+  id: number;
+  /** The page this product is listed on. */
+  pageId: number;
+  name: string;
+  /**
+   * Integer minor units, the same rule the wallet enforces. The catalogue
+   * stores prices as strings; the host parses them and fails loudly on a price
+   * it cannot read, so the SDK never sees a string price.
+   *
+   * Note there is deliberately **no seller/user identifier** anywhere on a
+   * product. These are the signed-in user's own products, so there is no
+   * counterparty to name, and a stable id here would be something two
+   * micro-apps could join on. Do not add one.
+   */
+  priceMinor: number;
+  /** Currency code for `priceMinor`, e.g. `'HOOMI'`. */
+  currency: string;
+  description?: string;
+  stock: number;
+  imageUrls: string[];
+  [key: string]: unknown;
+}
+
+export interface ListProductsParams {
+  /** Positive integer; same ownership rule as `pages.get`. */
+  pageId: number;
+}
+
+export interface ListProductsResult {
+  products: HoomiProduct[];
+}
+
+// ---------------------------------------------------------------------------
 // ble
 // ---------------------------------------------------------------------------
 

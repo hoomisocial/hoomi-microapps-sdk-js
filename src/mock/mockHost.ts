@@ -10,11 +10,22 @@ import { decodeCallFrame, encodeFrame, utf8ByteLength } from '../core/codec.js';
 import { HoomiError } from '../core/errors.js';
 import { isValidMethod } from '../core/ids.js';
 import type { HoomiBootstrap, Transport } from '../core/transport.js';
-import type { JsonValue, LaunchPayload, UserProfile } from '../api/types.js';
+import type { HoomiPage, HoomiProduct, JsonValue, LaunchPayload, UserProfile } from '../api/types.js';
 import { isScenarioName, type ScenarioName } from './scenarios.js';
 
 export type PermissionDomain = 'location' | 'camera' | 'microphone' | 'bluetooth';
 export type PermissionState = 'granted' | 'prompt' | 'denied' | 'denied_forever';
+
+/**
+ * One storefront page the signed-in mock user owns, plus what it lists.
+ *
+ * Products hang off the seed rather than off `page` because they are not part
+ * of a page's wire shape: `pages.get` never returns a product list.
+ */
+export interface MockPageSeed {
+  page: HoomiPage;
+  products?: HoomiProduct[];
+}
 
 export interface MockLimits {
   maxPayloadBytes: number;
@@ -44,6 +55,11 @@ export interface MockHostOptions {
   epoch?: number;
   capabilities?: string[];
   user?: Partial<UserProfile>;
+  /**
+   * Storefront pages the signed-in user owns. Any `pageId` outside this set
+   * answers `E_SCOPE_DENIED`. Defaults to one page with one product.
+   */
+  pages?: MockPageSeed[];
   rateLimit?: { burst: number; refillPerSec: number } | null;
 }
 
@@ -100,6 +116,11 @@ export interface MockHostHandle {
   grant(...scopes: string[]): void;
   revoke(...scopes: string[]): void;
   setPermission(domain: PermissionDomain, state: PermissionState): void;
+  /**
+   * Replace the set of pages the signed-in user owns. Everything not seeded
+   * here is treated as somebody else's page: `E_SCOPE_DENIED`.
+   */
+  setPages(pages: MockPageSeed[]): void;
   setOffline(offline: boolean): void;
   /** Bump the host epoch: in-flight SDK epochs become stale (E_STALE_EPOCH). */
   setEpoch(epoch: number, announce?: boolean): void;
@@ -127,6 +148,7 @@ const SCOPE_BY_PREFIX: Record<string, string> = {
   audio: 'microphone',
   wallet: 'wallet',
   jobs: 'jobs',
+  pages: 'pages',
   ble: 'ble',
   iot: 'iot',
 };
@@ -153,12 +175,17 @@ const NETWORK_METHODS = new Set([
   'wallet.getBalance',
   'wallet.requestPayment',
   'wallet.getPaymentStatus',
+  // The page catalogue lives on the backend, so these fail offline like any
+  // other server-backed read.
+  'pages.list',
+  'pages.get',
+  'pages.listProducts',
   'iot.listDevices',
   'iot.readTelemetry',
   'iot.sendCommand',
 ]);
 
-const DEFAULT_SCOPES = ['profile', 'location', 'camera', 'microphone', 'wallet', 'jobs', 'ble', 'iot'];
+const DEFAULT_SCOPES = ['profile', 'location', 'camera', 'microphone', 'wallet', 'jobs', 'pages', 'ble', 'iot'];
 const DEFAULT_CAPABILITIES = [
   'lifecycle',
   'ui',
@@ -170,8 +197,39 @@ const DEFAULT_CAPABILITIES = [
   'audio',
   'wallet',
   'jobs',
+  'pages',
   'ble',
   'iot',
+];
+
+/**
+ * One page with one product, so `pages.*` answers something useful out of the
+ * box. Replace with `setPages()` or the `pages` option.
+ */
+const DEFAULT_PAGES: MockPageSeed[] = [
+  {
+    page: {
+      id: 1,
+      name: 'Kopi Senayan',
+      description: 'Single-origin beans, ground to order.',
+      category: 'Food & Beverage',
+      logoUrl: 'https://example.invalid/pages/1/logo.png',
+      bannerUrl: 'https://example.invalid/pages/1/banner.jpg',
+      followers: 1_284,
+    },
+    products: [
+      {
+        id: 101,
+        pageId: 1,
+        name: 'Flat White 250ml',
+        priceMinor: 28_000,
+        currency: 'HOOMI',
+        description: 'Double ristretto, steamed milk.',
+        stock: 42,
+        imageUrls: ['https://example.invalid/products/101.jpg'],
+      },
+    ],
+  },
 ];
 
 const DEFAULT_LIMITS: MockLimits = {
@@ -242,6 +300,45 @@ interface StoredPayment {
   payeeRef: string;
 }
 
+/**
+ * The wire-visible projection of a page: exactly the v1 result shape, with
+ * absent optionals omitted rather than sent as `null`, like the Dart host's
+ * `toJson`. Seeds carrying extra keys do not leak them — a mock that is more
+ * generous than the real host produces micro-apps that break on device.
+ */
+function pageView(page: HoomiPage): Record<string, unknown> {
+  return {
+    id: page.id,
+    name: page.name,
+    ...(page.description !== undefined ? { description: page.description } : {}),
+    ...(page.category !== undefined ? { category: page.category } : {}),
+    ...(page.logoUrl !== undefined ? { logoUrl: page.logoUrl } : {}),
+    ...(page.bannerUrl !== undefined ? { bannerUrl: page.bannerUrl } : {}),
+    followers: page.followers,
+  };
+}
+
+/**
+ * Same for a product — and note what is *not* here: no seller or user id.
+ * These are the signed-in user's own products, so there is no counterparty to
+ * name, and a stable identifier on this payload would be something two
+ * micro-apps could join on. `priceMinor` is integer minor units, the same rule
+ * the wallet enforces; the catalogue's string prices are parsed by the host,
+ * so a price never reaches the page as a string.
+ */
+function productView(product: HoomiProduct): Record<string, unknown> {
+  return {
+    id: product.id,
+    pageId: product.pageId,
+    name: product.name,
+    priceMinor: product.priceMinor,
+    currency: product.currency,
+    ...(product.description !== undefined ? { description: product.description } : {}),
+    stock: product.stock,
+    imageUrls: [...product.imageUrls],
+  };
+}
+
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 export class MockHost implements MockHostHandle {
@@ -279,6 +376,8 @@ export class MockHost implements MockHostHandle {
   #balance = 12_500_000;
   #payments = new Map<string, StoredPayment>();
   #jobs = new Map<string, { jobId: string; name: string; runAt: number; payload?: Record<string, JsonValue> }>();
+  #pages = new Map<number, HoomiPage>();
+  #products = new Map<number, HoomiProduct[]>();
   #bleConnected = new Set<string>();
   #recordings = new Map<string, { recordingId: string; startedAt: number }>();
   #subs = new Map<string, ActiveSub>();
@@ -333,6 +432,7 @@ export class MockHost implements MockHostHandle {
       ...(o.user ?? {}),
     };
     this.#balance = 12_500_000;
+    this.setPages(o.pages ?? DEFAULT_PAGES);
     if (o.scenario) this.applyScenario(o.scenario);
   }
 
@@ -454,6 +554,20 @@ export class MockHost implements MockHostHandle {
 
   setPermission(domain: PermissionDomain, state: PermissionState): void {
     this.#permissions.set(domain, state);
+  }
+
+  setPages(pages: MockPageSeed[]): void {
+    this.#pages.clear();
+    this.#products.clear();
+    for (const seed of pages) {
+      // Copied, not aliased: a test that mutates its seed afterwards must not
+      // be able to reach inside the host.
+      this.#pages.set(seed.page.id, { ...seed.page });
+      this.#products.set(
+        seed.page.id,
+        (seed.products ?? []).map((product) => ({ ...product, imageUrls: [...product.imageUrls] })),
+      );
+    }
   }
 
   setOffline(offline: boolean): void {
@@ -1051,6 +1165,21 @@ export class MockHost implements MockHostHandle {
       case 'jobs.list':
         return { jobs: [...this.#jobs.values()] };
 
+      // pages ---------------------------------------------------------------------
+      // The signed-in user's OWN storefronts. Not a directory: there is no way
+      // in to a page this user does not own, by design.
+      case 'pages.list':
+        this.#requirePagesProvider(method);
+        return { pages: [...this.#pages.values()].map(pageView) };
+      case 'pages.get':
+        this.#requirePagesProvider(method);
+        return pageView(this.#requireOwnedPage(p, method));
+      case 'pages.listProducts': {
+        this.#requirePagesProvider(method);
+        const page = this.#requireOwnedPage(p, method);
+        return { products: (this.#products.get(page.id) ?? []).map(productView) };
+      }
+
       // ble -----------------------------------------------------------------------
       case 'ble.requestDevice':
         return { deviceId: 'ble-mock-1', name: 'Hoomi Beacon', rssi: -52 };
@@ -1123,6 +1252,47 @@ export class MockHost implements MockHostHandle {
       currency: payment.currency,
       ...(payment.orderId !== undefined ? { orderId: payment.orderId } : {}),
     };
+  }
+
+  /**
+   * `E_UNSUPPORTED`, the way the real host answers a namespace with no
+   * provider wired: permanent for this host build, so the SDK may cache it.
+   * Drop `'pages'` from `capabilities` to model a host without the provider.
+   */
+  #requirePagesProvider(method: string): void {
+    if (!this.#capabilities.includes('pages')) {
+      throw new WireFailure('E_UNSUPPORTED', `Method ${method} is not supported by this host`);
+    }
+  }
+
+  /**
+   * A page the signed-in user owns, or `E_SCOPE_DENIED`.
+   *
+   * The answer is deliberately the same for a page owned by somebody else and
+   * a page that does not exist at all: distinguishing them would turn
+   * `pages.get` into an enumeration oracle over every Page in Hoomi, which is
+   * exactly what this namespace is scoped to avoid. It is not
+   * `E_INVALID_PARAMS` either — the id was well-formed, the answer is about
+   * authorization, and re-prompting the user would not change it.
+   */
+  #requireOwnedPage(p: Record<string, unknown>, method: string): HoomiPage {
+    const pageId = this.#requirePositiveInt(p, 'pageId', method);
+    const page = this.#pages.get(pageId);
+    if (!page) {
+      throw new WireFailure('E_SCOPE_DENIED', `Page ${pageId} is not owned by the signed-in user`, false, { pageId });
+    }
+    return page;
+  }
+
+  #requirePositiveInt(p: Record<string, unknown>, key: string, method: string): number {
+    const v = p[key];
+    if (typeof v !== 'number' || !Number.isSafeInteger(v) || v < 1) {
+      throw new WireFailure(
+        'E_INVALID_PARAMS',
+        `${method} requires a positive integer "${key}" (got ${JSON.stringify(v)})`,
+      );
+    }
+    return v;
   }
 
   #requireString(p: Record<string, unknown>, key: string, method: string): string {

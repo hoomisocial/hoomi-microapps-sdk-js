@@ -1,0 +1,7 @@
+{
+  "name": "pages.get rejects a non-integer pageId rather than truncating it",
+  "protocol": 1,
+  "method": "pages.get",
+  "params": { "pageId": 1.5 },
+  "expect": { "ok": false, "errorCode": "E_INVALID_PARAMS" }
+}

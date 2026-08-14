@@ -1,0 +1,7 @@
+{
+  "name": "pages.get rejects pageId 0 — ids are >= 1, and 0 is what a failed parse looks like",
+  "protocol": 1,
+  "method": "pages.get",
+  "params": { "pageId": 0 },
+  "expect": { "ok": false, "errorCode": "E_INVALID_PARAMS" }
+}

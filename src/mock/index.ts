@@ -21,6 +21,7 @@ export {
   type MockHostOptions,
   type MockLimits,
   type MockMethodHandler,
+  type MockPageSeed,
   type MockStreamController,
   type MockStreamDriver,
   type PermissionDomain,

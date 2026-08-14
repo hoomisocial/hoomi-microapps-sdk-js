@@ -73,6 +73,7 @@ export type {
   JobsApi,
   LifecycleApi,
   LocationApi,
+  PagesApi,
   StorageApi,
   SystemApi,
   UiApi,

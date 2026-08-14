@@ -83,6 +83,39 @@ question. `payeeRef` (who is paid) is required and is not the same thing as
 not throw. The host's idempotency key is derived from the session and is
 deliberately never returned — `paymentId` is the only app-facing handle.
 
+### Pages: the user's own storefronts (protocol v1)
+
+A Hoomi user can create **Pages** — a store with a name, a category and a
+product list. `hoomi.pages` is read-only access to *theirs*:
+
+| method | params | result |
+| --- | --- | --- |
+| `pages.list` | `{}` | `{ pages: HoomiPage[] }` |
+| `pages.get` | `{ pageId }` — positive integer | `HoomiPage` (the page itself, not wrapped) |
+| `pages.listProducts` | `{ pageId }` | `{ products: HoomiProduct[] }` |
+
+```ts
+const { pages } = await hoomi.pages.list();
+const { products } = await hoomi.pages.listProducts({ pageId: pages[0].id });
+console.log(products[0].priceMinor, products[0].currency); // 28000 'HOOMI'
+```
+
+This is **not** a way to browse Hoomi. Pages the user merely follows, and
+anyone else's pages, are out of scope — a well-formed `pageId` the signed-in
+user does not own answers `E_SCOPE_DENIED`, and it answers exactly the same for
+a page that does not exist, so `pages.get` cannot be used to enumerate the
+catalogue. That boundary is why this is one modest consent row rather than a
+directory capability.
+
+`priceMinor` is **integer minor units**, the same rule as the wallet; the
+catalogue stores prices as strings and the host parses them, so the SDK never
+sees a string price. There is deliberately **no seller or user identifier on a
+product**: these are the user's own products, so there is no counterparty to
+name, and a stable id there would be something two micro-apps could join on.
+A missing, non-integer or `< 1` `pageId` rejects with `E_INVALID_PARAMS`
+before it reaches the wire; a host with no pages provider wired answers
+`E_UNSUPPORTED`.
+
 ### Error model
 
 Everything that rejects across the public API is a `HoomiError` — never a bare
@@ -146,7 +179,8 @@ http://localhost:5173/?hoomi_scenario=deny-forever&hoomi_latency=1200
 
 The returned handle: `on(method, handler)`, `onStream(method, driver)`,
 `fail(method, code)`, `delay(ms)`, `setScopes/grant/revoke`,
-`setPermission(domain, state)`, `setEpoch(n, announce?)`, `emit(event, data)`,
+`setPermission(domain, state)`, `setPages(seed)` (which storefront pages the
+signed-in user owns), `setEpoch(n, announce?)`, `emit(event, data)`,
 `pressBack()`, `waitFor(method)`, `frames` (wire log), `applyScenario(name)`,
 `reset()`, `uninstall()`. Throw `mockError('E_UNAUTHENTICATED')` inside an
 override to fail with a specific code.
@@ -201,7 +235,7 @@ cd examples/react-vite && npm install && npm run dev
 
 ```bash
 npm install
-npm test          # vitest: 181 tests incl. fast-check property tests + protocol vectors
+npm test          # vitest: 208 tests incl. fast-check property tests + protocol vectors
 npm run build     # ESM+CJS multi-entry, IIFE global, .d.ts
 npm run size      # size + tree-shaking gate (core ≤ 12 KB min+gzip)
 ```
