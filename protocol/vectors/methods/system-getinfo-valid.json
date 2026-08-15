@@ -1,0 +1,16 @@
+{
+  "name": "system.getInfo returns a flat object, not one nested under a device key",
+  "protocol": 1,
+  "method": "system.getInfo",
+  "params": {},
+  "expect": {
+    "ok": true,
+    "result": {
+      "protocol": 1
+    },
+    "resultTypes": {
+      "platform": "string",
+      "locale": "string"
+    }
+  }
+}

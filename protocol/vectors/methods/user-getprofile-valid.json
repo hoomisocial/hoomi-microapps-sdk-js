@@ -1,0 +1,12 @@
+{
+  "name": "user.getProfile identifies the user by a pseudonymous id, never a raw user id",
+  "protocol": 1,
+  "method": "user.getProfile",
+  "params": {},
+  "expect": {
+    "ok": true,
+    "resultTypes": {
+      "id": "string"
+    }
+  }
+}

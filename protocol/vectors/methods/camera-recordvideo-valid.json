@@ -1,0 +1,20 @@
+{
+  "name": "camera.recordVideo returns the recording in uri, plus an opaque handle",
+  "protocol": 1,
+  "method": "camera.recordVideo",
+  "params": {
+    "maxDurationMs": 5000
+  },
+  "expect": {
+    "ok": true,
+    "result": {
+      "mimeType": "video/mp4"
+    },
+    "resultTypes": {
+      "uri": "string",
+      "handle": "string",
+      "byteLength": "number",
+      "durationMs": "number"
+    }
+  }
+}

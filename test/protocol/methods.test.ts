@@ -75,15 +75,23 @@ afterEach(() => {
 
 describe('per-method conformance corpus', () => {
   it('the corpus is present (drift alarm: do not let this list shrink)', () => {
-    expect(files.length).toBeGreaterThanOrEqual(27);
+    expect(files.length).toBeGreaterThanOrEqual(41);
   });
 
   it('covers every method of every namespace that has vectors', () => {
     const methods = new Set(vectors.map(([, v]) => v.method));
     expect([...methods].sort()).toEqual([
+      'audio.stopRecord',
+      'camera.capture',
+      'camera.pickImage',
+      'camera.recordVideo',
+      'camera.scanCode',
+      'location.getCurrent',
       'pages.get',
       'pages.list',
       'pages.listProducts',
+      'system.getInfo',
+      'user.getProfile',
       'wallet.getBalance',
       'wallet.getPaymentStatus',
       'wallet.requestPayment',

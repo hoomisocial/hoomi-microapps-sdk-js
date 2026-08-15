@@ -1,0 +1,19 @@
+{
+  "name": "camera.recordVideo accepts facing: front",
+  "protocol": 1,
+  "method": "camera.recordVideo",
+  "params": {
+    "facing": "front"
+  },
+  "expect": {
+    "ok": true,
+    "result": {
+      "mimeType": "video/mp4"
+    },
+    "resultTypes": {
+      "uri": "string",
+      "handle": "string",
+      "byteLength": "number"
+    }
+  }
+}

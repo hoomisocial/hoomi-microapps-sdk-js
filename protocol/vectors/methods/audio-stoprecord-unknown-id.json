@@ -1,0 +1,12 @@
+{
+  "name": "audio.stopRecord rejects a recording id it never issued",
+  "protocol": 1,
+  "method": "audio.stopRecord",
+  "params": {
+    "recordingId": "rec-does-not-exist"
+  },
+  "expect": {
+    "ok": false,
+    "errorCode": "E_INVALID_PARAMS"
+  }
+}

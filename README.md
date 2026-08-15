@@ -116,6 +116,63 @@ A missing, non-integer or `< 1` `pageId` rejects with `E_INVALID_PARAMS`
 before it reaches the wire; a host with no pages provider wired answers
 `E_UNSUPPORTED`.
 
+### Media: photos, codes, video and audio (protocol v1)
+
+| method | params | result |
+| --- | --- | --- |
+| `camera.capture` | `{ facing?, quality? }` | `MediaAsset` |
+| `camera.pickImage` | `{ count? }` | `{ assets: MediaAsset[] }` |
+| `camera.scanCode` | `{ formats? }` | `{ text, format }` |
+| `camera.recordVideo` | `{ facing?, maxDurationMs? }` | `MediaAsset` |
+| `audio.startRecord` | `{ maxDurationMs?, format? }` | `{ recordingId }` |
+| `audio.stopRecord` | `{ recordingId }` | `MediaAsset` |
+| `audio.cancelRecord` | `{ recordingId }` | — |
+
+**Every media-producing method returns the same `MediaAsset`.** A photo, a
+picked image, a video and a recording differ only in their bytes, so there is
+one shape rather than four — a per-method result type is precisely how this
+SDK and the Dart host drifted apart once already.
+
+```ts
+try {
+  const video = await hoomi.camera.recordVideo({ facing: 'back', maxDurationMs: 15_000 });
+  player.src = video.uri;          // the content, not a receipt
+} catch (err) {
+  if ((err as HoomiError).code === 'E_PAYLOAD_TOO_LARGE') offerShorterClip();
+}
+
+const photo = await hoomi.camera.capture();
+img.src = photo.uri;               // same shape, same rules
+
+const { recordingId } = await hoomi.audio.startRecord();
+const clip = await hoomi.audio.stopRecord({ recordingId });
+audioEl.src = clip.uri;
+```
+
+A `MediaAsset` is `{ handle, uri, mimeType, byteLength, width?, height?,
+durationMs?, previewDataUri? }`. **`uri` is the point**: the host is the
+gateway to the hardware, so an app that asked for a video gets the video —
+a `data:` URI while it is small enough to travel inline, or an `https:` URL
+once the host has stored it. `handle` is an opaque, session-scoped reference
+for host-side operations like uploading it later, and is deliberately **never
+a filesystem path**: handing one to a micro-app would leak the app sandbox
+layout and invite traversal. Do not parse it. `byteLength` is the size of the
+media *before* base64 expansion.
+
+`camera.scanCode` returns the decoded payload as **`text`** (with the
+symbology in `format`), matching the host — not `value`.
+
+**Expect `E_PAYLOAD_TOO_LARGE` from `recordVideo`.** Video is rarely small
+enough to travel inline, and a host that cannot store the recording and hand
+back an `https:` URL refuses rather than pushing a payload across the bridge
+that would wedge the page. That is the designed answer, not a host defect —
+handle it like a failed upload, and note that retrying the same call unchanged
+cannot help, while a shorter `maxDurationMs` might. `E_CANCELLED` means the
+user dismissed the camera; `E_UNSUPPORTED` means this host build wires no
+camera provider at all. `maxDurationMs` must be a positive integer — the SDK
+rejects anything else with `E_INVALID_PARAMS` before a frame is written, and
+the host additionally holds it to its own window (v1: 100 ms to 10 minutes).
+
 ### Error model
 
 Everything that rejects across the public API is a `HoomiError` — never a bare
@@ -180,7 +237,9 @@ http://localhost:5173/?hoomi_scenario=deny-forever&hoomi_latency=1200
 The returned handle: `on(method, handler)`, `onStream(method, driver)`,
 `fail(method, code)`, `delay(ms)`, `setScopes/grant/revoke`,
 `setPermission(domain, state)`, `setPages(seed)` (which storefront pages the
-signed-in user owns), `setEpoch(n, announce?)`, `emit(event, data)`,
+signed-in user owns), `setVideoTooLarge(bool)` (make `camera.recordVideo`
+answer `E_PAYLOAD_TOO_LARGE`, the common case for real video; also the
+`videoTooLarge` option), `setEpoch(n, announce?)`, `emit(event, data)`,
 `pressBack()`, `waitFor(method)`, `frames` (wire log), `applyScenario(name)`,
 `reset()`, `uninstall()`. Throw `mockError('E_UNAUTHENTICATED')` inside an
 override to fail with a specific code.
@@ -235,7 +294,7 @@ cd examples/react-vite && npm install && npm run dev
 
 ```bash
 npm install
-npm test          # vitest: 208 tests incl. fast-check property tests + protocol vectors
+npm test          # vitest: 241 tests incl. fast-check property tests + 39 protocol method vectors
 npm run build     # ESM+CJS multi-entry, IIFE global, .d.ts
 npm run size      # size + tree-shaking gate (core ≤ 12 KB min+gzip)
 ```

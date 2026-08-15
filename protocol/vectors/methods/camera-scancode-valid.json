@@ -1,0 +1,13 @@
+{
+  "name": "camera.scanCode returns the decoded text and its format",
+  "protocol": 1,
+  "method": "camera.scanCode",
+  "params": {},
+  "expect": {
+    "ok": true,
+    "resultTypes": {
+      "text": "string",
+      "format": "string"
+    }
+  }
+}

@@ -16,7 +16,6 @@ import type {
   BleWriteParams,
   CameraCaptureParams,
   CancelJobParams,
-  CapturedImage,
   ConfirmParams,
   ConfirmResult,
   GeoPosition,
@@ -34,13 +33,14 @@ import type {
   ListProductsResult,
   LocationParams,
   LocationWatchParams,
+  MediaAsset,
   NetworkStatus,
   OpenExternalParams,
   PaymentResult,
   PickImageParams,
   PickImageResult,
   ReadTelemetryParams,
-  RecordingResult,
+  RecordVideoParams,
   ReportErrorParams,
   RequestPaymentParams,
   ScanCodeParams,
@@ -108,6 +108,22 @@ function assertRequestPaymentParams(params: RequestPaymentParams | undefined): v
  * with `E_INVALID_PARAMS` too — catching it here just means the defect
  * surfaces in the micro-app's own stack trace instead of as a round trip.
  */
+/**
+ * A duration in milliseconds must be a positive safe integer, for the same
+ * reason `pageId` must: TypeScript cannot express "integer", JSON has no
+ * integer type, and `0` or `-1` are not durations a camera can honour. The
+ * host validates it too — catching it here just means the bad frame is never
+ * written and the defect surfaces in the micro-app's own stack trace.
+ */
+function requireDurationMs(value: unknown, method: string, key: string): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1) {
+    throw invalidParams(
+      `${method} requires "${key}" to be a positive integer number of milliseconds (got ${JSON.stringify(value)})`,
+    );
+  }
+  return value;
+}
+
 function requirePageId(value: unknown, method: string): number {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1) {
     throw invalidParams(`${method} requires "pageId" to be a positive integer (got ${JSON.stringify(value)})`);
@@ -156,15 +172,54 @@ export interface LocationApi {
   watch(params: LocationWatchParams | undefined, observer: Observer<GeoPosition>, opts?: CallOptions): Promise<Subscription>;
 }
 
+/**
+ * Every method here that produces media resolves to the same `MediaAsset`.
+ *
+ * The content is in `uri` — a `data:` URI while it is small enough to travel
+ * inline, or an `https:` URL once the host has stored it — because the host is
+ * the gateway to the hardware and an app that asked for a photo gets the
+ * photo, not a receipt it cannot redeem. `handle` is an opaque, session-scoped
+ * reference for host-side operations like uploading it later, and is
+ * deliberately **never a filesystem path**: handing one to a micro-app would
+ * leak the app sandbox layout and invite traversal. Do not parse it.
+ */
 export interface CameraApi {
-  capture(params?: CameraCaptureParams, opts?: CallOptions): Promise<CapturedImage>;
+  /** A photo, as a `MediaAsset`: content in `uri`, opaque `handle`. */
+  capture(params?: CameraCaptureParams, opts?: CallOptions): Promise<MediaAsset>;
+  /**
+   * Pick from the gallery. The list is `assets` — the same `MediaAsset`s
+   * every other media method returns.
+   */
   pickImage(params?: PickImageParams, opts?: CallOptions): Promise<PickImageResult>;
+  /** The decoded payload is `text`, with the symbology in `format`. */
   scanCode(params?: ScanCodeParams, opts?: CallOptions): Promise<ScanCodeResult>;
+  /**
+   * Record a video and resolve to the recording itself, as a `MediaAsset`.
+   *
+   * **Expect `E_PAYLOAD_TOO_LARGE`.** Video is rarely small enough to travel
+   * inline, and a host that cannot store the recording and hand back an
+   * `https:` URL refuses rather than pushing a payload across the bridge that
+   * would wedge the page. That is the designed answer, not a host defect:
+   * handle it the way you handle a failed upload, and do not retry the same
+   * call unchanged — a shorter `maxDurationMs` is what might change the
+   * outcome. Also: `E_CANCELLED` when the user dismisses the camera,
+   * `E_UNSUPPORTED` when the host has no camera provider wired at all, and
+   * `E_INVALID_PARAMS` (page-side, before any frame is written) for a
+   * `maxDurationMs` that is not a positive integer.
+   */
+  recordVideo(params?: RecordVideoParams, opts?: CallOptions): Promise<MediaAsset>;
 }
 
 export interface AudioApi {
+  /** Begins a recording and resolves to the id used to stop it. */
   startRecord(params?: StartRecordParams, opts?: CallOptions): Promise<StartRecordResult>;
-  stopRecord(params?: StopRecordParams, opts?: CallOptions): Promise<RecordingResult>;
+  /**
+   * Stop the recording and resolve to it, as a `MediaAsset` — the same shape
+   * the camera returns. The audio is in `uri`; `handle` is the opaque
+   * host-side reference and is never a filesystem path.
+   */
+  stopRecord(params?: StopRecordParams, opts?: CallOptions): Promise<MediaAsset>;
+  /** Discard the recording. Nothing is returned, because nothing is kept. */
   cancelRecord(params?: StopRecordParams, opts?: CallOptions): Promise<void>;
 }
 
@@ -288,13 +343,23 @@ export function createApiNamespaces(client: BridgeClient): ApiNamespaces {
       watch: (params, observer, opts) => client.subscribe('location.watch', params ?? {}, toObserver(observer), opts),
     },
     camera: {
-      capture: (params, opts) => call<CapturedImage>('camera.capture', params ?? {}, opts),
+      capture: (params, opts) => call<MediaAsset>('camera.capture', params ?? {}, opts),
       pickImage: (params, opts) => call<PickImageResult>('camera.pickImage', params ?? {}, opts),
       scanCode: (params, opts) => call<ScanCodeResult>('camera.scanCode', params ?? {}, opts),
+      // async so a validation failure rejects the returned promise rather
+      // than throwing synchronously out of the call expression.
+      recordVideo: async (params, opts) => {
+        const body: Record<string, unknown> = {};
+        if (params?.facing !== undefined) body['facing'] = params.facing;
+        if (params?.maxDurationMs !== undefined) {
+          body['maxDurationMs'] = requireDurationMs(params.maxDurationMs, 'camera.recordVideo', 'maxDurationMs');
+        }
+        return call<MediaAsset>('camera.recordVideo', body, opts);
+      },
     },
     audio: {
       startRecord: (params, opts) => call<StartRecordResult>('audio.startRecord', params ?? {}, opts),
-      stopRecord: (params, opts) => call<RecordingResult>('audio.stopRecord', params ?? {}, opts),
+      stopRecord: (params, opts) => call<MediaAsset>('audio.stopRecord', params ?? {}, opts),
       cancelRecord: (params, opts) => callVoid('audio.cancelRecord', params ?? {}, opts),
     },
     wallet: {

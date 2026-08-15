@@ -257,8 +257,8 @@ describe('host constraints (the mock must not be nicer than the real host)', () 
 describe('handle API', () => {
   it('on() overrides a method; mockError() fails it with a specific code', async () => {
     const { hoomi, host } = make();
-    host.on('camera.scanCode', (params) => ({ value: `scanned:${JSON.stringify(params)}`, format: 'qr' }));
-    expect((await hoomi.camera.scanCode({ formats: ['qr'] })).value).toContain('scanned:');
+    host.on('camera.scanCode', (params) => ({ text: `scanned:${JSON.stringify(params)}`, format: 'qr' }));
+    expect((await hoomi.camera.scanCode({ formats: ['qr'] })).text).toContain('scanned:');
     host.on('user.getIdToken', () => {
       throw mockError('E_UNAUTHENTICATED', 'session expired');
     });

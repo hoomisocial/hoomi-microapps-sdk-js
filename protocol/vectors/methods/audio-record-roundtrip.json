@@ -1,0 +1,26 @@
+{
+  "name": "audio.stopRecord returns the recording in uri with its duration",
+  "protocol": 1,
+  "setup": [
+    {
+      "method": "audio.startRecord",
+      "params": {},
+      "bind": {
+        "recordingId": "recordingId"
+      }
+    }
+  ],
+  "method": "audio.stopRecord",
+  "params": {
+    "recordingId": "$recordingId"
+  },
+  "expect": {
+    "ok": true,
+    "resultTypes": {
+      "uri": "string",
+      "handle": "string",
+      "mimeType": "string",
+      "durationMs": "number"
+    }
+  }
+}

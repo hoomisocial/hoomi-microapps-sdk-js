@@ -56,6 +56,14 @@ export interface MockHostOptions {
   capabilities?: string[];
   user?: Partial<UserProfile>;
   /**
+   * Make `camera.recordVideo` refuse with `E_PAYLOAD_TOO_LARGE`, the way a
+   * real host does when a recording will not fit inline and it has nowhere to
+   * store it. That is the *common* case for video, so it is worth developing
+   * against: switch it on and check the app degrades instead of hanging on a
+   * promise that never resolves.
+   */
+  videoTooLarge?: boolean;
+  /**
    * Storefront pages the signed-in user owns. Any `pageId` outside this set
    * answers `E_SCOPE_DENIED`. Defaults to one page with one product.
    */
@@ -121,6 +129,11 @@ export interface MockHostHandle {
    * here is treated as somebody else's page: `E_SCOPE_DENIED`.
    */
   setPages(pages: MockPageSeed[]): void;
+  /**
+   * Toggle the oversized-recording answer for `camera.recordVideo`
+   * (`E_PAYLOAD_TOO_LARGE`). See `MockHostOptions.videoTooLarge`.
+   */
+  setVideoTooLarge(tooLarge: boolean): void;
   setOffline(offline: boolean): void;
   /** Bump the host epoch: in-flight SDK epochs become stale (E_STALE_EPOCH). */
   setEpoch(epoch: number, announce?: boolean): void;
@@ -165,6 +178,7 @@ const INTERACTIVE_METHODS = new Set([
   'camera.capture',
   'camera.pickImage',
   'camera.scanCode',
+  'camera.recordVideo',
   'ble.requestDevice',
   'wallet.requestPayment',
   'ui.openExternal',
@@ -231,6 +245,43 @@ const DEFAULT_PAGES: MockPageSeed[] = [
     ],
   },
 ];
+
+/**
+ * The stand-in media every capture method hands back: real (if minimal)
+ * `data:` URIs rather than `mock://` placeholders, so an app that renders what
+ * it got is exercising the actual contract. A `mock://` string is not
+ * resolvable by anything — an `<img src>` pointed at one fails silently, which
+ * is exactly the class of bug a mock is supposed to surface on a laptop.
+ *
+ * - photo: a genuine 160-byte 1×1 JPEG.
+ * - video: 32 bytes of MP4 `ftyp` box header.
+ * - audio: a valid 44-byte silent WAV (header only, zero samples).
+ */
+const MOCK_PHOTO_DATA_URI =
+  'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==';
+const MOCK_VIDEO_DATA_URI = 'data:video/mp4;base64,AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDE=';
+const MOCK_AUDIO_DATA_URI = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
+
+/**
+ * `byteLength` is *derived* from the URI, never written next to it by hand:
+ * the pair has to stay consistent, and the real host reports the size of the
+ * bytes it is actually returning. An app that trusts `byteLength` to decide
+ * whether to upload inline would be misled by a number that drifted.
+ *
+ * Size before base64 expansion, as the field promises.
+ */
+function dataUriByteLength(dataUri: string): number {
+  const base64 = dataUri.slice(dataUri.indexOf(',') + 1);
+  const padding = base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0;
+  return (base64.length / 4) * 3 - padding;
+}
+
+/**
+ * The window the v1 host accepts for `maxDurationMs`. The mock enforces it
+ * because a mock that is more lenient than the real host produces micro-apps
+ * that work on a laptop and fail on device.
+ */
+const VIDEO_DURATION_MS = { min: 100, max: 600_000 } as const;
 
 const DEFAULT_LIMITS: MockLimits = {
   maxPayloadBytes: 262_144,
@@ -354,6 +405,7 @@ export class MockHost implements MockHostHandle {
   #jitterMs = 0;
   #failureRate = 0;
   #offline = false;
+  #videoTooLarge = false;
   #strict = false;
   #cancelEverything = false;
   #scenario: ScenarioName = 'happy';
@@ -417,6 +469,7 @@ export class MockHost implements MockHostHandle {
     this.#jitterMs = o.jitterMs ?? 0;
     this.#failureRate = o.failureRate ?? 0;
     this.#offline = o.offline ?? false;
+    this.#videoTooLarge = o.videoTooLarge ?? false;
     this.#strict = o.strict ?? false;
     this.#cancelEverything = false;
     this.#rateLimit = o.rateLimit ?? null;
@@ -568,6 +621,10 @@ export class MockHost implements MockHostHandle {
         (seed.products ?? []).map((product) => ({ ...product, imageUrls: [...product.imageUrls] })),
       );
     }
+  }
+
+  setVideoTooLarge(tooLarge: boolean): void {
+    this.#videoTooLarge = tooLarge;
   }
 
   setOffline(offline: boolean): void {
@@ -1033,6 +1090,9 @@ export class MockHost implements MockHostHandle {
 
       // system -------------------------------------------------------------------
       case 'system.getInfo':
+        // Flat, like the host: `protocol` and `appId` sit alongside the device
+        // fields rather than under a `device` wrapper, so a consumer reads
+        // `info.platform` and not `info.device.platform`.
         return {
           platform: 'android',
           osVersion: '14',
@@ -1041,6 +1101,8 @@ export class MockHost implements MockHostHandle {
           locale: 'en-US',
           theme: 'light',
           safeAreaInsets: { top: 24, right: 0, bottom: 16, left: 0 },
+          protocol: 1,
+          appId: this.#appId,
         };
       case 'system.getNetworkStatus':
         return this.#offline ? { online: false, type: 'none' } : { online: true, type: 'wifi' };
@@ -1065,20 +1127,53 @@ export class MockHost implements MockHostHandle {
 
       // camera --------------------------------------------------------------------
       case 'camera.capture':
-        return { uri: `mock://camera/photo-${++this.#seq}.jpg`, width: 1280, height: 720, mimeType: 'image/jpeg' };
+        // 1×1 because that is genuinely what the embedded JPEG contains: an
+        // app that reads width/height and an app that decodes `uri` must not
+        // be told two different things.
+        return this.#mediaAsset(MOCK_PHOTO_DATA_URI, 'image/jpeg', { width: 1, height: 1 });
       case 'camera.pickImage': {
-        const count = typeof p['count'] === 'number' && p['count'] > 0 ? Math.min(p['count'], 10) : 1;
+        const count =
+          typeof p['maxItems'] === 'number' && p['maxItems'] > 0
+            ? Math.min(p['maxItems'], 20)
+            : 1;
+        // `assets`, matching the host: the elements are MediaAssets like every
+        // other media result, so the list is not named after the picker.
         return {
-          images: Array.from({ length: count }, () => ({
-            uri: `mock://gallery/img-${++this.#seq}.jpg`,
-            width: 1024,
-            height: 768,
-            mimeType: 'image/jpeg',
-          })),
+          assets: Array.from({ length: count }, () =>
+            this.#mediaAsset(MOCK_PHOTO_DATA_URI, 'image/jpeg', { width: 1, height: 1 }),
+          ),
         };
       }
       case 'camera.scanCode':
-        return { value: `HOOMI-MOCK-${++this.#seq}`, format: 'qr' };
+        // The decoded payload is `text`, not `value`.
+        return { text: `HOOMI-MOCK-${++this.#seq}`, format: 'qr' };
+      case 'camera.recordVideo': {
+        // Like the real host: anything that is not the string 'front' means
+        // the back camera, but a non-string is a malformed param.
+        const facing = p['facing'];
+        if (facing !== undefined && typeof facing !== 'string') {
+          throw new WireFailure('E_INVALID_PARAMS', `${method} requires "facing" to be a string`);
+        }
+        const maxDurationMs = this.#optionalInt(p, 'maxDurationMs', method, VIDEO_DURATION_MS);
+        // Video is rarely small enough to travel inline as a data URI. A host
+        // that cannot store the recording and return an https URL refuses
+        // rather than pushing a payload that would wedge the page — so this is
+        // an expected answer, not an injected fault.
+        if (this.#videoTooLarge) {
+          throw new WireFailure(
+            'E_PAYLOAD_TOO_LARGE',
+            'The recording is too large to return inline and this host cannot store it',
+            false,
+            { maxPayloadBytes: this.#limits.maxPayloadBytes },
+          );
+        }
+        return this.#mediaAsset(MOCK_VIDEO_DATA_URI, 'video/mp4', {
+          width: 640,
+          height: 360,
+          // A recording never runs longer than the caller asked for.
+          durationMs: Math.min(maxDurationMs ?? 1_200, 1_200),
+        });
+      }
 
       // audio -----------------------------------------------------------------------
       case 'audio.startRecord': {
@@ -1091,7 +1186,11 @@ export class MockHost implements MockHostHandle {
         const rec = recordingId !== undefined ? this.#recordings.get(recordingId) : undefined;
         if (!rec) throw new WireFailure('E_INVALID_PARAMS', 'No active recording to stop');
         this.#recordings.delete(rec.recordingId);
-        return { uri: `mock://audio/${rec.recordingId}.m4a`, durationMs: Date.now() - rec.startedAt, mimeType: 'audio/mp4' };
+        // The same MediaAsset the camera returns: a recording is media, and a
+        // second result shape for audio is how the two SDKs drift apart.
+        return this.#mediaAsset(MOCK_AUDIO_DATA_URI, 'audio/wav', {
+          durationMs: Date.now() - rec.startedAt,
+        });
       }
       case 'audio.cancelRecord': {
         const recordingId = typeof p['recordingId'] === 'string' ? p['recordingId'] : [...this.#recordings.keys()].pop();
@@ -1239,6 +1338,35 @@ export class MockHost implements MockHostHandle {
   }
 
   /**
+   * The one media shape every capture method returns — `camera.capture`,
+   * `camera.pickImage`, `camera.recordVideo` and `audio.stopRecord` alike.
+   *
+   * The content goes in `uri`, because the host is the gateway to the hardware
+   * and an app that asked for a photo gets the photo. `handle` is opaque and
+   * session-scoped: never a filesystem path, since one would leak the app
+   * sandbox layout and invite traversal. `byteLength` is derived from the URI
+   * so the two can never disagree.
+   *
+   * No `previewDataUri`: it is only sent when `uri` is large, and none of
+   * these stand-ins are.
+   */
+  #mediaAsset(
+    dataUri: string,
+    mimeType: string,
+    extra: { width?: number; height?: number; durationMs?: number } = {},
+  ): Record<string, unknown> {
+    return {
+      handle: `mock-media-${++this.#seq}`,
+      uri: dataUri,
+      mimeType,
+      byteLength: dataUriByteLength(dataUri),
+      ...(extra.width !== undefined ? { width: extra.width } : {}),
+      ...(extra.height !== undefined ? { height: extra.height } : {}),
+      ...(extra.durationMs !== undefined ? { durationMs: extra.durationMs } : {}),
+    };
+  }
+
+  /**
    * The wire-visible projection of a payment: exactly the v1 result shape.
    * `payeeRef` and any host-internal idempotency key are deliberately absent.
    */
@@ -1290,6 +1418,28 @@ export class MockHost implements MockHostHandle {
       throw new WireFailure(
         'E_INVALID_PARAMS',
         `${method} requires a positive integer "${key}" (got ${JSON.stringify(v)})`,
+      );
+    }
+    return v;
+  }
+
+  /**
+   * An optional integer within a range, refused rather than clamped: JSON has
+   * no integer type, so `0`, `-1` and `1.5` all arrive as perfectly valid
+   * numbers and only the host can tell they are not durations.
+   */
+  #optionalInt(
+    p: Record<string, unknown>,
+    key: string,
+    method: string,
+    range: { min: number; max: number },
+  ): number | undefined {
+    const v = p[key];
+    if (v === undefined || v === null) return undefined;
+    if (typeof v !== 'number' || !Number.isSafeInteger(v) || v < range.min || v > range.max) {
+      throw new WireFailure(
+        'E_INVALID_PARAMS',
+        `${method} requires "${key}" to be an integer between ${range.min} and ${range.max} (got ${JSON.stringify(v)})`,
       );
     }
     return v;

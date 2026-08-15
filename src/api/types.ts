@@ -56,8 +56,20 @@ export interface OpenExternalParams {
 // system
 // ---------------------------------------------------------------------------
 
+/**
+ * Flat, not nested under a `device` key: consumers read `platform` and
+ * `locale` straight off the result, and a wrapper would make every one of them
+ * reach through it for nothing.
+ */
 export interface SystemInfo {
   platform: string;
+  /**
+   * The wire protocol version the host is speaking, echoed here so an app can
+   * check it without keeping the handshake result around.
+   */
+  protocol?: number;
+  /** The micro-app's own id, as the host knows it. */
+  appId?: string;
   osVersion?: string;
   hostVersion?: string;
   model?: string;
@@ -123,28 +135,74 @@ export interface GeoPosition {
 }
 
 // ---------------------------------------------------------------------------
+// media
+//
+// Every method that produces media — `camera.capture`, `camera.pickImage`,
+// `camera.recordVideo`, `audio.stopRecord` — resolves to the same `MediaAsset`.
+// One shape, because "a photo" and "a recording" differ only in their bytes,
+// and a per-method result type is how the two SDKs drift apart.
+// ---------------------------------------------------------------------------
+
+/**
+ * A captured, picked or recorded asset — the host's single media shape.
+ *
+ * Carries the content itself and deliberately **no filesystem path**: the host
+ * is the gateway to the hardware, so an app that asked for a photo gets the
+ * photo, in `uri`. `handle` is an opaque, session-scoped reference for
+ * host-side operations like uploading it later — never a path, because handing
+ * one to a micro-app would leak the app sandbox layout and invite traversal.
+ */
+export interface MediaAsset {
+  /** Opaque, session-scoped host reference. Not a path; do not parse it. */
+  handle: string;
+  /**
+   * The content, as something the page can render or upload directly: a
+   * `data:` URI when it is small enough to travel inline, or an `https:` URL
+   * once the host has stored it. This is the point of the capability — a
+   * result carrying only a handle would be a receipt the app cannot redeem.
+   */
+  uri: string;
+  /** e.g. `'image/jpeg'`, `'video/mp4'`, `'audio/wav'`. */
+  mimeType: string;
+  /** Size of the underlying media in bytes, *before* any base64 expansion. */
+  byteLength: number;
+  width?: number;
+  height?: number;
+  durationMs?: number;
+  /** A downscaled thumbnail, sent only when `uri` is large. */
+  previewDataUri?: string;
+  [key: string]: unknown;
+}
+
+// ---------------------------------------------------------------------------
 // camera
 // ---------------------------------------------------------------------------
 
 export interface CameraCaptureParams {
   facing?: 'front' | 'back';
+  /** JPEG quality, 1..100. */
   quality?: number;
-}
-
-export interface CapturedImage {
-  uri: string;
-  width?: number;
-  height?: number;
-  mimeType?: string;
-  [key: string]: unknown;
+  /** Downscale bounds the host applies before returning the image. */
+  maxWidth?: number;
+  maxHeight?: number;
 }
 
 export interface PickImageParams {
-  count?: number;
+  /**
+   * Upper bound on how many images to return, not an exact count — the user
+   * may pick fewer. Named to match the host, which clamps it to 1..20; a
+   * mismatched name here meant a request for five silently returned one.
+   */
+  maxItems?: number;
 }
 
+/**
+ * The wrapper key is `assets`, not `images`: the elements are `MediaAsset`s,
+ * the same ones every other media method returns, and naming the list after
+ * the picker rather than its contents is how a second shape gets invented.
+ */
 export interface PickImageResult {
-  images: CapturedImage[];
+  assets: MediaAsset[];
 }
 
 export interface ScanCodeParams {
@@ -152,8 +210,22 @@ export interface ScanCodeParams {
 }
 
 export interface ScanCodeResult {
-  value: string;
-  format?: string;
+  /** The decoded payload. Named `text` on the wire, never `value`. */
+  text: string;
+  /** e.g. `'qr'`, `'ean13'`. */
+  format: string;
+}
+
+export interface RecordVideoParams {
+  /** Which camera to open. Defaults to `'back'`. */
+  facing?: 'front' | 'back';
+  /**
+   * Stop the recording after this many milliseconds. Positive integer; the
+   * SDK rejects anything else with `E_INVALID_PARAMS` before a frame is
+   * written. Hosts additionally clamp it to a sane window (v1: 100 ms to
+   * 10 minutes) and answer `E_INVALID_PARAMS` outside it.
+   */
+  maxDurationMs?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -170,14 +242,12 @@ export interface StartRecordResult {
 }
 
 export interface StopRecordParams {
-  recordingId?: string;
-}
-
-export interface RecordingResult {
-  uri: string;
-  durationMs?: number;
-  mimeType?: string;
-  [key: string]: unknown;
+  /**
+   * Required. The host will not guess which recording to stop, so omitting it
+   * is `E_INVALID_PARAMS` on a device even though a lenient mock might accept
+   * it.
+   */
+  recordingId: string;
 }
 
 // ---------------------------------------------------------------------------

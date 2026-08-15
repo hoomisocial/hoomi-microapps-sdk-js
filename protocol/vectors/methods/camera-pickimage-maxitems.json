@@ -1,0 +1,18 @@
+{
+  "name": "camera.pickImage honours maxItems, so a request for three is not silently one",
+  "protocol": 1,
+  "method": "camera.pickImage",
+  "params": {
+    "maxItems": 3
+  },
+  "expect": {
+    "ok": true,
+    "result": {
+      "assets": [
+        {},
+        {},
+        {}
+      ]
+    }
+  }
+}

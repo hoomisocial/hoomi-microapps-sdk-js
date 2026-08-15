@@ -1,0 +1,12 @@
+{
+  "name": "camera.recordVideo rejects a zero maxDurationMs",
+  "protocol": 1,
+  "method": "camera.recordVideo",
+  "params": {
+    "maxDurationMs": 0
+  },
+  "expect": {
+    "ok": false,
+    "errorCode": "E_INVALID_PARAMS"
+  }
+}

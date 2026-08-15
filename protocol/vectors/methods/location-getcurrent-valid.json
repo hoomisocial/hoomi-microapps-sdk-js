@@ -1,0 +1,15 @@
+{
+  "name": "location.getCurrent reports accuracy in metres and an epoch-millisecond timestamp",
+  "protocol": 1,
+  "method": "location.getCurrent",
+  "params": {},
+  "expect": {
+    "ok": true,
+    "resultTypes": {
+      "latitude": "number",
+      "longitude": "number",
+      "accuracy": "number",
+      "timestamp": "number"
+    }
+  }
+}

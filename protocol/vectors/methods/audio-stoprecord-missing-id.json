@@ -1,0 +1,10 @@
+{
+  "name": "audio.stopRecord requires recordingId — the host will not guess which recording to stop",
+  "protocol": 1,
+  "method": "audio.stopRecord",
+  "params": {},
+  "expect": {
+    "ok": false,
+    "errorCode": "E_INVALID_PARAMS"
+  }
+}

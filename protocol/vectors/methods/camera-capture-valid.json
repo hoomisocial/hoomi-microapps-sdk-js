@@ -1,0 +1,15 @@
+{
+  "name": "camera.capture returns the content in uri, plus an opaque handle",
+  "protocol": 1,
+  "method": "camera.capture",
+  "params": {},
+  "expect": {
+    "ok": true,
+    "resultTypes": {
+      "uri": "string",
+      "handle": "string",
+      "mimeType": "string",
+      "byteLength": "number"
+    }
+  }
+}
