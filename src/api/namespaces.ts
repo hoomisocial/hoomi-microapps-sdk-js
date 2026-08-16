@@ -165,6 +165,13 @@ export interface LocationApi {
  * reference for host-side operations like uploading it later, and is
  * deliberately **never a filesystem path**: handing one to a micro-app would
  * leak the app sandbox layout and invite traversal. Do not parse it.
+ *
+ * There is no video method, deliberately: a recording is almost never small
+ * enough to cross the bridge. Record it in the page instead — `getUserMedia()`
+ * + `MediaRecorder`, or `<input type="file" accept="video/*" capture>`. The
+ * host's WebView gates `getUserMedia` on the same camera/microphone scopes the
+ * bridge enforces, and the recording stays a `Blob` your app previews or
+ * uploads itself.
  */
 export interface CameraApi {
   /** A photo, as a `MediaAsset`: content in `uri`, opaque `handle`. */
@@ -314,16 +321,6 @@ export function createApiNamespaces(client: BridgeClient): ApiNamespaces {
       capture: (params, opts) => call<MediaAsset>('camera.capture', params ?? {}, opts),
       pickImage: (params, opts) => call<PickImageResult>('camera.pickImage', params ?? {}, opts),
       scanCode: (params, opts) => call<ScanCodeResult>('camera.scanCode', params ?? {}, opts),
-      // async so a validation failure rejects the returned promise rather
-      // than throwing synchronously out of the call expression.
-      recordVideo: async (params, opts) => {
-        const body: Record<string, unknown> = {};
-        if (params?.facing !== undefined) body['facing'] = params.facing;
-        if (params?.maxDurationMs !== undefined) {
-          body['maxDurationMs'] = requireDurationMs(params.maxDurationMs, 'camera.recordVideo', 'maxDurationMs');
-        }
-        return call<MediaAsset>('camera.recordVideo', body, opts);
-      },
     },
     audio: {
       startRecord: (params, opts) => call<StartRecordResult>('audio.startRecord', params ?? {}, opts),
