@@ -40,7 +40,6 @@ import type {
   PickImageParams,
   PickImageResult,
   ReadTelemetryParams,
-  RecordVideoParams,
   ReportErrorParams,
   RequestPaymentParams,
   ScanCodeParams,
@@ -108,22 +107,6 @@ function assertRequestPaymentParams(params: RequestPaymentParams | undefined): v
  * with `E_INVALID_PARAMS` too — catching it here just means the defect
  * surfaces in the micro-app's own stack trace instead of as a round trip.
  */
-/**
- * A duration in milliseconds must be a positive safe integer, for the same
- * reason `pageId` must: TypeScript cannot express "integer", JSON has no
- * integer type, and `0` or `-1` are not durations a camera can honour. The
- * host validates it too — catching it here just means the bad frame is never
- * written and the defect surfaces in the micro-app's own stack trace.
- */
-function requireDurationMs(value: unknown, method: string, key: string): number {
-  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1) {
-    throw invalidParams(
-      `${method} requires "${key}" to be a positive integer number of milliseconds (got ${JSON.stringify(value)})`,
-    );
-  }
-  return value;
-}
-
 function requirePageId(value: unknown, method: string): number {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1) {
     throw invalidParams(`${method} requires "pageId" to be a positive integer (got ${JSON.stringify(value)})`);
@@ -193,21 +176,6 @@ export interface CameraApi {
   pickImage(params?: PickImageParams, opts?: CallOptions): Promise<PickImageResult>;
   /** The decoded payload is `text`, with the symbology in `format`. */
   scanCode(params?: ScanCodeParams, opts?: CallOptions): Promise<ScanCodeResult>;
-  /**
-   * Record a video and resolve to the recording itself, as a `MediaAsset`.
-   *
-   * **Expect `E_PAYLOAD_TOO_LARGE`.** Video is rarely small enough to travel
-   * inline, and a host that cannot store the recording and hand back an
-   * `https:` URL refuses rather than pushing a payload across the bridge that
-   * would wedge the page. That is the designed answer, not a host defect:
-   * handle it the way you handle a failed upload, and do not retry the same
-   * call unchanged — a shorter `maxDurationMs` is what might change the
-   * outcome. Also: `E_CANCELLED` when the user dismisses the camera,
-   * `E_UNSUPPORTED` when the host has no camera provider wired at all, and
-   * `E_INVALID_PARAMS` (page-side, before any frame is written) for a
-   * `maxDurationMs` that is not a positive integer.
-   */
-  recordVideo(params?: RecordVideoParams, opts?: CallOptions): Promise<MediaAsset>;
 }
 
 export interface AudioApi {

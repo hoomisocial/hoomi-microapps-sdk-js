@@ -138,9 +138,13 @@ export interface GeoPosition {
 // media
 //
 // Every method that produces media — `camera.capture`, `camera.pickImage`,
-// `camera.recordVideo`, `audio.stopRecord` — resolves to the same `MediaAsset`.
-// One shape, because "a photo" and "a recording" differ only in their bytes,
-// and a per-method result type is how the two SDKs drift apart.
+// `audio.stopRecord` — resolves to the same `MediaAsset`. One shape, because
+// "a photo" and "a recording" differ only in their bytes, and a per-method
+// result type is how the two SDKs drift apart.
+//
+// Video is not here on purpose: the bridge never carries a recording. Record
+// in the page with `getUserMedia` + `MediaRecorder`, or with an
+// `<input type="file" accept="video/*" capture>`; both stay a `Blob`.
 // ---------------------------------------------------------------------------
 
 /**
@@ -162,7 +166,7 @@ export interface MediaAsset {
    * result carrying only a handle would be a receipt the app cannot redeem.
    */
   uri: string;
-  /** e.g. `'image/jpeg'`, `'video/mp4'`, `'audio/wav'`. */
+  /** e.g. `'image/jpeg'`, `'image/png'`, `'audio/wav'`. */
   mimeType: string;
   /** Size of the underlying media in bytes, *before* any base64 expansion. */
   byteLength: number;
@@ -214,18 +218,6 @@ export interface ScanCodeResult {
   text: string;
   /** e.g. `'qr'`, `'ean13'`. */
   format: string;
-}
-
-export interface RecordVideoParams {
-  /** Which camera to open. Defaults to `'back'`. */
-  facing?: 'front' | 'back';
-  /**
-   * Stop the recording after this many milliseconds. Positive integer; the
-   * SDK rejects anything else with `E_INVALID_PARAMS` before a frame is
-   * written. Hosts additionally clamp it to a sane window (v1: 100 ms to
-   * 10 minutes) and answer `E_INVALID_PARAMS` outside it.
-   */
-  maxDurationMs?: number;
 }
 
 // ---------------------------------------------------------------------------
