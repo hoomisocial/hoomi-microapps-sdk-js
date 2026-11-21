@@ -54,7 +54,7 @@ Every method accepts a trailing `{ signal?: AbortSignal; timeoutMs?: number }`:
 
 ```ts
 const controller = new AbortController();
-const pos = hoomi.location.getCurrent({ accuracy: 'fine' }, { signal: controller.signal });
+const pos = hoomi.location.getCurrent({ accuracy: 'high' }, { signal: controller.signal });
 ```
 
 Streams (`location.watch`, `ble.notifications`) return a `Subscription`:
@@ -63,6 +63,60 @@ Streams (`location.watch`, `ble.notifications`) return a `Subscription`:
 const sub = await hoomi.location.watch({ minIntervalMs: 2000 }, (pos) => draw(pos));
 await sub.close();
 ```
+
+### Location: accuracy, and tracking in the background (protocol v1)
+
+`accuracy` is `'coarse' | 'balanced' | 'high'`. **`'high'` is the precise
+mode** — GPS-grade, what navigation and ride-hailing need — and it requires the
+`location.fine` scope on `getCurrent`, `watch` and `track` alike. The older
+`'fine'` is still accepted but deprecated: the host never recognised it, so it
+behaves as `'balanced'`, and it is left that way so existing apps do not change
+behaviour. The distance filter is `minDistanceMeters` (the old `minDistanceM`
+is translated for you).
+
+`location.watch` only delivers while your page is running, and a page stops
+running when the user locks the phone or switches apps. For a trip, a delivery
+or a run, use `location.track`:
+
+```ts
+const tracking = await hoomi.location.track(
+  { accuracy: 'high', minDistanceMeters: 10 },
+  {
+    next: (fix) => trip.add(fix),        // every fix, in order: { seq, latitude, longitude, ... }
+    error: (err) => showTrackingLost(err), // E_UNAVAILABLE: GPS switched off, permission revoked
+    complete: () => showTrackingEnded(),   // the host's time limit was reached
+  },
+  { onDropped: (count) => trip.markGap(count) },
+);
+
+// later
+await tracking.stop();
+```
+
+The host records fixes natively and keeps Hoomi alive to do it (a foreground
+service and notification on Android, background location on iOS). Your page
+receives them live while it is awake, and receives the whole backlog, in order,
+when the user comes back. What to know:
+
+- **Scopes:** `location.background`, plus `location.fine` for `'high'`.
+- **The user is asked every time tracking starts**, and can see it is on.
+- **It ends when the micro-app is closed.** It does not continue after that,
+  and the host never sends fixes anywhere but to your page — forward them to
+  your backend yourself.
+- **It survives a reload.** Call `track()` again and you re-attach to the same
+  session (`tracking.resumed === true`) with no second prompt. Fixes the old
+  page had received but not yet acknowledged arrive again, so delivery across a
+  reload is at-least-once; `fix.seq` identifies a repeat.
+- **Limits are reported, not silent.** The host buffers 10,000 unread fixes
+  (`onDropped` tells you if it had to evict any) and stops a session after 8
+  hours (`complete`); call `track()` again to carry on.
+- `startTracking` / `readTrack` / `stopTracking` are the host calls underneath,
+  if you want to manage the cursor yourself.
+
+To keep the display awake while your app is in front — a driver following a
+route — call `hoomi.ui.setKeepScreenOn(true)`. The host releases it whenever
+your app is hidden or closed. It needs the `ui.keepScreenOn` scope in the
+manifest and never prompts.
 
 ### Wallet payloads (protocol v1)
 
