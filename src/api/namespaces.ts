@@ -4,6 +4,7 @@
  */
 
 import type { BridgeClient, CallOptions, Subscription, SubscriptionObserver } from '../core/client.js';
+import { createLocationTracker, type TrackOptions, type TrackingHandle, type TrackingRawApi } from './tracking.js';
 import { HoomiError } from '../core/errors.js';
 import type {
   AlertParams,
@@ -33,6 +34,11 @@ import type {
   ListProductsResult,
   LocationParams,
   LocationWatchParams,
+  ReadTrackParams,
+  ReadTrackResult,
+  StartTrackingParams,
+  TrackedFix,
+  TrackingSession,
   MediaAsset,
   NetworkStatus,
   OpenExternalParams,
@@ -67,6 +73,25 @@ function toObserver<T>(observer: Observer<T>): SubscriptionObserver<unknown> {
 
 function invalidParams(message: string): HoomiError {
   return new HoomiError('E_INVALID_PARAMS', message);
+}
+
+/** An integer in [min, max] when present. JSON has no integer type to catch `1.5` for us. */
+function optionalInt(value: unknown, method: string, key: string, min: number, max = Number.MAX_SAFE_INTEGER): void {
+  if (value === undefined) return;
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < min || value > max) {
+    throw invalidParams(`${method} requires "${key}" to be an integer >= ${min}${max === Number.MAX_SAFE_INTEGER ? '' : ` and <= ${max}`} (got ${JSON.stringify(value)})`);
+  }
+}
+
+/**
+ * `minDistanceM` was this SDK's name for what the host has always read as
+ * `minDistanceMeters`, so the filter was silently ignored. Sent under the
+ * host's name now; the old spelling is still accepted.
+ */
+function watchParams(params: LocationWatchParams | undefined): Record<string, unknown> {
+  const { minDistanceM, ...rest } = params ?? {};
+  if (minDistanceM !== undefined && rest.minDistanceMeters === undefined) rest.minDistanceMeters = minDistanceM;
+  return rest;
 }
 
 function requireNonEmptyString(value: unknown, method: string, key: string): string {
@@ -128,6 +153,12 @@ export interface UiApi {
   /** Resolves true when the user confirmed. */
   confirm(params: ConfirmParams | string, opts?: CallOptions): Promise<boolean>;
   openExternal(params: OpenExternalParams | string, opts?: CallOptions): Promise<void>;
+  /**
+   * Keep the display awake while this micro-app is on screen. The host
+   * releases it whenever the app is hidden or closed, so there is nothing to
+   * clean up; call it with `false` to let the screen sleep again.
+   */
+  setKeepScreenOn(enabled: boolean, opts?: CallOptions): Promise<void>;
 }
 
 export interface StorageApi {
@@ -153,6 +184,24 @@ export interface LocationApi {
   getCurrent(params?: LocationParams, opts?: CallOptions): Promise<GeoPosition>;
   /** Continuous position stream via bridge.subscribe. */
   watch(params: LocationWatchParams | undefined, observer: Observer<GeoPosition>, opts?: CallOptions): Promise<Subscription>;
+  /**
+   * Every fix, in order, for as long as the micro-app is open — including the
+   * ones taken while Hoomi was in the background or the phone was locked.
+   *
+   * `watch` stops delivering the moment the page is suspended. `track` has
+   * the host record fixes natively and hands over the backlog when the page
+   * wakes, so nothing between is lost. The user is asked each time tracking
+   * starts, and it ends when the micro-app is closed.
+   *
+   * Needs the `location.background` scope, plus `location.fine` for
+   * `accuracy: 'high'`.
+   */
+  track(params: StartTrackingParams | undefined, observer: Observer<TrackedFix>, opts?: TrackOptions): Promise<TrackingHandle>;
+  /** The host call behind `track`. Prefer `track` unless you need the cursor yourself. */
+  startTracking(params?: StartTrackingParams, opts?: CallOptions): Promise<TrackingSession>;
+  /** Reads fixes after `afterSeq`, which also acknowledges everything up to it. */
+  readTrack(params: ReadTrackParams, opts?: CallOptions): Promise<ReadTrackResult>;
+  stopTracking(trackingId: string, opts?: CallOptions): Promise<void>;
 }
 
 /**
@@ -270,6 +319,31 @@ export interface ApiNamespaces {
 }
 
 export function createApiNamespaces(client: BridgeClient): ApiNamespaces {
+  // async so a validation failure rejects the returned promise rather than
+  // throwing synchronously out of the call expression.
+  const tracking: TrackingRawApi = {
+    startTracking: async (params, opts) => {
+      const accuracy: unknown = params?.accuracy;
+      if (accuracy !== undefined && accuracy !== 'coarse' && accuracy !== 'balanced' && accuracy !== 'high') {
+        throw invalidParams(
+          `location.startTracking requires "accuracy" to be 'coarse', 'balanced' or 'high' (got ${JSON.stringify(accuracy)})`,
+        );
+      }
+      optionalInt(params?.minDistanceMeters, 'location.startTracking', 'minDistanceMeters', 0);
+      return client.call('location.startTracking', params ?? {}, opts) as Promise<TrackingSession>;
+    },
+    readTrack: async (params, opts) => {
+      requireNonEmptyString(params?.trackingId, 'location.readTrack', 'trackingId');
+      optionalInt(params.afterSeq, 'location.readTrack', 'afterSeq', 0);
+      optionalInt(params.limit, 'location.readTrack', 'limit', 1, 500);
+      return client.call('location.readTrack', params, opts) as Promise<ReadTrackResult>;
+    },
+    stopTracking: async (trackingId, opts) => {
+      requireNonEmptyString(trackingId, 'location.stopTracking', 'trackingId');
+      await client.call('location.stopTracking', { trackingId }, opts);
+    },
+  };
+
   const call = <T>(method: string, params?: unknown, opts?: CallOptions): Promise<T> =>
     client.call(method, params, opts) as Promise<T>;
   const callVoid = (method: string, params?: unknown, opts?: CallOptions): Promise<void> =>
@@ -291,6 +365,12 @@ export function createApiNamespaces(client: BridgeClient): ApiNamespaces {
       },
       openExternal: (params, opts) =>
         callVoid('ui.openExternal', typeof params === 'string' ? { url: params } : params, opts),
+      setKeepScreenOn: async (enabled, opts) => {
+        if (typeof enabled !== 'boolean') {
+          throw invalidParams(`ui.setKeepScreenOn requires a boolean (got ${JSON.stringify(enabled)})`);
+        }
+        return callVoid('ui.setKeepScreenOn', { enabled }, opts);
+      },
     },
     storage: {
       get: async <T extends JsonValue = JsonValue>(key: string, opts?: CallOptions) => {
@@ -315,7 +395,10 @@ export function createApiNamespaces(client: BridgeClient): ApiNamespaces {
     },
     location: {
       getCurrent: (params, opts) => call<GeoPosition>('location.getCurrent', params ?? {}, opts),
-      watch: (params, observer, opts) => client.subscribe('location.watch', params ?? {}, toObserver(observer), opts),
+      watch: (params, observer, opts) =>
+        client.subscribe('location.watch', watchParams(params), toObserver(observer), opts),
+      track: createLocationTracker(client, tracking),
+      ...tracking,
     },
     camera: {
       capture: (params, opts) => call<MediaAsset>('camera.capture', params ?? {}, opts),
