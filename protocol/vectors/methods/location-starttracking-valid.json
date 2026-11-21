@@ -1,0 +1,22 @@
+{
+  "name": "location.startTracking starts a session and describes its limits",
+  "protocol": 1,
+  "method": "location.startTracking",
+  "params": {
+    "accuracy": "balanced",
+    "minDistanceMeters": 25
+  },
+  "expect": {
+    "ok": true,
+    "result": {
+      "resumed": false,
+      "state": "active"
+    },
+    "resultTypes": {
+      "trackingId": "string",
+      "startedAt": "number",
+      "expiresAt": "number",
+      "maxBufferedFixes": "number"
+    }
+  }
+}

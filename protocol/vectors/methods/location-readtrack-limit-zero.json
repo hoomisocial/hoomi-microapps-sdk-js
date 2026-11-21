@@ -1,0 +1,22 @@
+{
+  "name": "location.readTrack rejects a zero limit",
+  "protocol": 1,
+  "method": "location.readTrack",
+  "params": {
+    "trackingId": "$trackingId",
+    "limit": 0
+  },
+  "setup": [
+    {
+      "method": "location.startTracking",
+      "params": {},
+      "bind": {
+        "trackingId": "trackingId"
+      }
+    }
+  ],
+  "expect": {
+    "ok": false,
+    "errorCode": "E_INVALID_PARAMS"
+  }
+}

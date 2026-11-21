@@ -1,0 +1,12 @@
+{
+  "name": "location.startTracking rejects a negative minDistanceMeters",
+  "protocol": 1,
+  "method": "location.startTracking",
+  "params": {
+    "minDistanceMeters": -1
+  },
+  "expect": {
+    "ok": false,
+    "errorCode": "E_INVALID_PARAMS"
+  }
+}

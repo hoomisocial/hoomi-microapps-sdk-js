@@ -75,7 +75,7 @@ afterEach(() => {
 
 describe('per-method conformance corpus', () => {
   it('the corpus is present (drift alarm: do not let this list shrink)', () => {
-    expect(files.length).toBeGreaterThanOrEqual(36);
+    expect(files.length).toBeGreaterThanOrEqual(54);
   });
 
   it('covers every method of every namespace that has vectors', () => {
@@ -86,10 +86,14 @@ describe('per-method conformance corpus', () => {
       'camera.pickImage',
       'camera.scanCode',
       'location.getCurrent',
+      'location.readTrack',
+      'location.startTracking',
+      'location.stopTracking',
       'pages.get',
       'pages.list',
       'pages.listProducts',
       'system.getInfo',
+      'ui.setKeepScreenOn',
       'user.getProfile',
       'wallet.getBalance',
       'wallet.getPaymentStatus',

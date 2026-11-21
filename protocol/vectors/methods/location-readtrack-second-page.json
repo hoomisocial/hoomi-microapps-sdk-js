@@ -1,0 +1,30 @@
+{
+  "name": "location.readTrack returns only fixes after the cursor",
+  "protocol": 1,
+  "method": "location.readTrack",
+  "params": {
+    "trackingId": "$trackingId",
+    "afterSeq": 2
+  },
+  "setup": [
+    {
+      "method": "location.startTracking",
+      "params": {},
+      "bind": {
+        "trackingId": "trackingId"
+      }
+    }
+  ],
+  "expect": {
+    "ok": true,
+    "result": {
+      "fixes": [
+        {
+          "seq": 3
+        }
+      ],
+      "lastSeq": 3,
+      "hasMore": false
+    }
+  }
+}

@@ -34,7 +34,7 @@ Fields:
 | `params` | yes | Params object sent verbatim. |
 | `setup` | no | Calls to make first (see below). |
 | `expect.ok` | yes | Whether the call is expected to succeed. |
-| `expect.result` | no | On success: **subset** match against the result object. Keys not listed are ignored. |
+| `expect.result` | no | On success: **subset** match against the result object. Keys not listed are ignored. Arrays match by equal length, element-wise with the same subset rule. |
 | `expect.resultTypes` | no | On success: `key → "string" \| "number" \| "boolean"`. For values a host is entitled to choose itself (ids), where pinning a literal would only pin *this* host's id scheme. |
 | `expect.errorCode` | on failure | Exact wire error code. |
 | `expect.errorData` | no | On failure: subset match against `error.data`. |
@@ -78,3 +78,13 @@ cannot: nothing a micro-app may call creates a storefront page, so the
 Only the ids are pinned. Names, prices, follower counts and product ids are the
 host's own data and no vector asserts them: pinning a literal there would pin
 *this* host's fixtures rather than the protocol.
+
+### Location tracking
+
+`location.readTrack` reads fixes a micro-app cannot create, so its vectors pin
+a fixture too. A runner's background location source must have recorded
+exactly **3 fixes** — `latitude` `-6.2`, `longitude` `106.8`, `isMocked`
+`false` — by the time the call *after* `location.startTracking` is answered,
+and must record no more on its own. That is what lets the corpus pin the fix
+shape, the paging, and ack-by-cursor rather than only the envelope around an
+empty array.

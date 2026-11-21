@@ -1,0 +1,22 @@
+{
+  "name": "location.startTracking returns the running session instead of starting a second one",
+  "protocol": 1,
+  "method": "location.startTracking",
+  "params": {},
+  "setup": [
+    {
+      "method": "location.startTracking",
+      "params": {},
+      "bind": {
+        "trackingId": "trackingId"
+      }
+    }
+  ],
+  "expect": {
+    "ok": true,
+    "result": {
+      "resumed": true,
+      "state": "active"
+    }
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "name": "location.readTrack rejects a session that was stopped",
+  "protocol": 1,
+  "method": "location.readTrack",
+  "params": {
+    "trackingId": "$trackingId"
+  },
+  "setup": [
+    {
+      "method": "location.startTracking",
+      "params": {},
+      "bind": {
+        "trackingId": "trackingId"
+      }
+    },
+    {
+      "method": "location.stopTracking",
+      "params": {
+        "trackingId": "$trackingId"
+      }
+    }
+  ],
+  "expect": {
+    "ok": false,
+    "errorCode": "E_INVALID_PARAMS"
+  }
+}

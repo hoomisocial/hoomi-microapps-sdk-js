@@ -1,0 +1,39 @@
+{
+  "name": "location.readTrack pages fixes in sequence order",
+  "protocol": 1,
+  "method": "location.readTrack",
+  "params": {
+    "trackingId": "$trackingId",
+    "afterSeq": 0,
+    "limit": 2
+  },
+  "setup": [
+    {
+      "method": "location.startTracking",
+      "params": {},
+      "bind": {
+        "trackingId": "trackingId"
+      }
+    }
+  ],
+  "expect": {
+    "ok": true,
+    "result": {
+      "fixes": [
+        {
+          "seq": 1,
+          "latitude": -6.2,
+          "longitude": 106.8,
+          "isMocked": false
+        },
+        {
+          "seq": 2
+        }
+      ],
+      "lastSeq": 3,
+      "hasMore": true,
+      "droppedCount": 0,
+      "state": "active"
+    }
+  }
+}

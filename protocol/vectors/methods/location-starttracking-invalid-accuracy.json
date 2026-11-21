@@ -1,0 +1,12 @@
+{
+  "name": "location.startTracking rejects an accuracy it does not know",
+  "protocol": 1,
+  "method": "location.startTracking",
+  "params": {
+    "accuracy": "ultra"
+  },
+  "expect": {
+    "ok": false,
+    "errorCode": "E_INVALID_PARAMS"
+  }
+}

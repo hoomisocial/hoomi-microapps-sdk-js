@@ -1,0 +1,11 @@
+{
+  "name": "ui.setKeepScreenOn accepts true",
+  "protocol": 1,
+  "method": "ui.setKeepScreenOn",
+  "params": {
+    "enabled": true
+  },
+  "expect": {
+    "ok": true
+  }
+}

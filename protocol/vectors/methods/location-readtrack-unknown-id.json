@@ -1,0 +1,12 @@
+{
+  "name": "location.readTrack rejects a tracking id it never issued",
+  "protocol": 1,
+  "method": "location.readTrack",
+  "params": {
+    "trackingId": "trk-does-not-exist"
+  },
+  "expect": {
+    "ok": false,
+    "errorCode": "E_INVALID_PARAMS"
+  }
+}

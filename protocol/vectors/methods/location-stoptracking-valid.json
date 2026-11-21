@@ -1,0 +1,20 @@
+{
+  "name": "location.stopTracking ends the session",
+  "protocol": 1,
+  "method": "location.stopTracking",
+  "params": {
+    "trackingId": "$trackingId"
+  },
+  "setup": [
+    {
+      "method": "location.startTracking",
+      "params": {},
+      "bind": {
+        "trackingId": "trackingId"
+      }
+    }
+  ],
+  "expect": {
+    "ok": true
+  }
+}

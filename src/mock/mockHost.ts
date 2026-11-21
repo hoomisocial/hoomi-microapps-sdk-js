@@ -10,8 +10,9 @@ import { decodeCallFrame, encodeFrame, utf8ByteLength } from '../core/codec.js';
 import { HoomiError } from '../core/errors.js';
 import { isValidMethod } from '../core/ids.js';
 import type { HoomiBootstrap, Transport } from '../core/transport.js';
-import type { HoomiPage, HoomiProduct, JsonValue, LaunchPayload, UserProfile } from '../api/types.js';
+import type { GeoPosition, HoomiPage, HoomiProduct, JsonValue, LaunchPayload, UserProfile } from '../api/types.js';
 import { isScenarioName, type ScenarioName } from './scenarios.js';
+import { TrackLog } from './trackLog.js';
 
 export type PermissionDomain = 'location' | 'camera' | 'microphone' | 'bluetooth';
 export type PermissionState = 'granted' | 'prompt' | 'denied' | 'denied_forever';
@@ -31,6 +32,10 @@ export interface MockLimits {
   maxPayloadBytes: number;
   maxSubscriptions: number;
   backPressGraceMs: number;
+  /** Unread fixes a tracking session holds before evicting the oldest. */
+  maxTrackedFixes: number;
+  /** How long a tracking session runs before the host stops it. */
+  maxTrackingMs: number;
 }
 
 export interface MockHostOptions {
@@ -122,6 +127,17 @@ export interface MockHostHandle {
    */
   setPages(pages: MockPageSeed[]): void;
   setOffline(offline: boolean): void;
+  /**
+   * Record a fix into the running tracking session, as if the device moved.
+   * Returns its `seq`. Throws when no session is actively tracking.
+   */
+  pushTrackFix(fix?: Partial<GeoPosition>): number;
+  /** End the tracking session as the host's time limit would. */
+  expireTracking(): void;
+  /** End the tracking session as a dead location source would (GPS off). */
+  failTracking(): void;
+  /** Whether the page has asked for the screen to stay awake. */
+  readonly keepScreenOn: boolean;
   /** Bump the host epoch: in-flight SDK epochs become stale (E_STALE_EPOCH). */
   setEpoch(epoch: number, announce?: boolean): void;
 
@@ -152,6 +168,35 @@ const SCOPE_BY_PREFIX: Record<string, string> = {
   ble: 'ble',
   iot: 'iot',
 };
+
+/**
+ * Scopes a method needs on top of its namespace's. Background tracking is a
+ * separate authority from reading location while the app is on screen.
+ */
+const EXTRA_SCOPE_BY_METHOD: Record<string, string> = {
+  'location.startTracking': 'location.background',
+  'location.readTrack': 'location.background',
+  'location.stopTracking': 'location.background',
+};
+
+/** Methods where `accuracy: 'high'` needs the `location.fine` scope. */
+const ACCURACY_METHODS = new Set(['location.getCurrent', 'location.watch', 'location.startTracking']);
+
+/** Fixes a tracking session has already recorded when it starts (see the vectors README). */
+const TRACK_FIXTURE_FIXES = 3;
+/** Minimum gap between `location.trackAvailable` hints, as on the host. */
+const TRACK_NUDGE_INTERVAL_MS = 1_000;
+
+interface MockTracking {
+  trackingId: string;
+  startedAt: number;
+  expiresAt: number;
+  state: 'active' | 'expired' | 'failed';
+  log: TrackLog;
+  expiry: ReturnType<typeof setTimeout> | undefined;
+  cooldown: ReturnType<typeof setTimeout> | undefined;
+  nudgeOwed: boolean;
+}
 
 const PERMISSION_BY_PREFIX: Record<string, PermissionDomain> = {
   location: 'location',
@@ -185,7 +230,7 @@ const NETWORK_METHODS = new Set([
   'iot.sendCommand',
 ]);
 
-const DEFAULT_SCOPES = ['profile', 'location', 'camera', 'microphone', 'wallet', 'jobs', 'pages', 'ble', 'iot'];
+const DEFAULT_SCOPES = ['profile', 'location', 'location.fine', 'location.background', 'camera', 'microphone', 'wallet', 'jobs', 'pages', 'ble', 'iot'];
 const DEFAULT_CAPABILITIES = [
   'lifecycle',
   'ui',
@@ -264,6 +309,8 @@ const DEFAULT_LIMITS: MockLimits = {
   maxPayloadBytes: 262_144,
   maxSubscriptions: 8,
   backPressGraceMs: 350,
+  maxTrackedFixes: 10_000,
+  maxTrackingMs: 8 * 60 * 60 * 1000,
 };
 
 function mulberry32(seed: number): () => number {
@@ -378,6 +425,8 @@ export class MockHost implements MockHostHandle {
   #capabilities: string[] = [];
   #permissions = new Map<PermissionDomain, PermissionState>();
   #limits: MockLimits = { ...DEFAULT_LIMITS };
+  #tracking: MockTracking | null = null;
+  #keepScreenOn = false;
   #latencyMs = 0;
   #jitterMs = 0;
   #failureRate = 0;
@@ -532,6 +581,96 @@ export class MockHost implements MockHostHandle {
 
   get activeSubscriptionCount(): number {
     return this.#subs.size;
+  }
+
+  get keepScreenOn(): boolean {
+    return this.#keepScreenOn;
+  }
+
+  pushTrackFix(fix: Partial<GeoPosition> = {}): number {
+    const tracking = this.#tracking;
+    if (!tracking || tracking.state !== 'active') {
+      throw new Error('[hoomi-mock] pushTrackFix: not tracking — call location.startTracking first');
+    }
+    const seq = tracking.log.record(this.#trackFix(fix));
+    this.#nudgeTracking(tracking);
+    return seq;
+  }
+
+  expireTracking(): void {
+    this.#endTracking('expired');
+  }
+
+  failTracking(): void {
+    this.#endTracking('failed');
+  }
+
+  #trackFix(fix: Partial<GeoPosition>): GeoPosition {
+    return { latitude: -6.2, longitude: 106.8, accuracy: 10, timestamp: Date.now(), isMocked: false, ...fix };
+  }
+
+  /** At once when idle, then at most one per interval — the host's rule. */
+  #nudgeTracking(tracking: MockTracking): void {
+    if (tracking.cooldown !== undefined) {
+      tracking.nudgeOwed = true;
+      return;
+    }
+    this.#push({
+      v: 1,
+      type: 'event',
+      event: 'location.trackAvailable',
+      data: { trackingId: tracking.trackingId, lastSeq: tracking.log.lastSeq },
+    });
+    tracking.cooldown = setTimeout(() => {
+      tracking.cooldown = undefined;
+      if (tracking.nudgeOwed) {
+        tracking.nudgeOwed = false;
+        this.#nudgeTracking(tracking);
+      }
+    }, TRACK_NUDGE_INTERVAL_MS);
+  }
+
+  /** Recording stops; the log stays readable until the page stops the session. */
+  #endTracking(state: 'expired' | 'failed'): void {
+    const tracking = this.#tracking;
+    if (!tracking || tracking.state !== 'active') return;
+    tracking.state = state;
+    if (tracking.expiry !== undefined) clearTimeout(tracking.expiry);
+    tracking.expiry = undefined;
+    this.#push({
+      v: 1,
+      type: 'event',
+      event: 'location.trackAvailable',
+      data: { trackingId: tracking.trackingId, lastSeq: tracking.log.lastSeq },
+    });
+  }
+
+  #disposeTracking(): void {
+    const tracking = this.#tracking;
+    if (!tracking) return;
+    if (tracking.expiry !== undefined) clearTimeout(tracking.expiry);
+    if (tracking.cooldown !== undefined) clearTimeout(tracking.cooldown);
+    this.#tracking = null;
+  }
+
+  #requireTracking(p: Record<string, unknown>, method: string): MockTracking {
+    const trackingId = this.#requireString(p, 'trackingId', method);
+    const tracking = this.#tracking;
+    if (!tracking || tracking.trackingId !== trackingId) {
+      throw new WireFailure('E_INVALID_PARAMS', `Unknown tracking session "${trackingId}"`);
+    }
+    return tracking;
+  }
+
+  #describeTracking(tracking: MockTracking, resumed: boolean): Record<string, unknown> {
+    return {
+      trackingId: tracking.trackingId,
+      startedAt: tracking.startedAt,
+      expiresAt: tracking.expiresAt,
+      maxBufferedFixes: this.#limits.maxTrackedFixes,
+      state: tracking.state,
+      resumed,
+    };
   }
 
   on(method: string, handler: MockMethodHandler): () => void {
@@ -706,6 +845,8 @@ export class MockHost implements MockHostHandle {
     this.#bleConnected.clear();
     this.#recordings.clear();
     this.#backWaiters.clear();
+    this.#disposeTracking();
+    this.#keepScreenOn = false;
     this.#helloSeen = false;
     this.#applyOptions();
   }
@@ -713,6 +854,7 @@ export class MockHost implements MockHostHandle {
   uninstall(): void {
     if (this.#uninstalled) return;
     this.#uninstalled = true;
+    this.#disposeTracking();
     for (const sub of this.#subs.values()) sub.cleanup?.();
     this.#subs.clear();
     this.#rxSinks.clear();
@@ -817,11 +959,17 @@ export class MockHost implements MockHostHandle {
     this.#tokens -= 1;
   }
 
-  #checkScope(method: string): void {
+  #checkScope(method: string, params?: unknown): void {
     const prefix = method.split('.')[0] ?? '';
-    const scope = SCOPE_BY_PREFIX[prefix];
-    if (scope && !this.#scopes.has(scope)) {
-      throw new WireFailure('E_SCOPE_DENIED', `Method ${method} requires scope "${scope}"`, false, { scope });
+    const required = [SCOPE_BY_PREFIX[prefix], EXTRA_SCOPE_BY_METHOD[method]];
+    // Precise positioning is its own authority, whichever method asks for it.
+    if (ACCURACY_METHODS.has(method) && (params as { accuracy?: unknown } | null | undefined)?.accuracy === 'high') {
+      required.push('location.fine');
+    }
+    for (const scope of required) {
+      if (scope && !this.#scopes.has(scope)) {
+        throw new WireFailure('E_SCOPE_DENIED', `Method ${method} requires scope "${scope}"`, false, { scope });
+      }
     }
   }
 
@@ -883,7 +1031,7 @@ export class MockHost implements MockHostHandle {
     if (this.#failureRate > 0 && this.#rand() < this.#failureRate) {
       throw new WireFailure('E_INTERNAL', `Injected random failure for ${method}`, true);
     }
-    this.#checkScope(method);
+    this.#checkScope(method, params);
     this.#checkPermission(method);
     this.#checkInteractive(method);
 
@@ -932,7 +1080,7 @@ export class MockHost implements MockHostHandle {
         maxSubscriptions: this.#limits.maxSubscriptions,
       });
     }
-    this.#checkScope(inner);
+    this.#checkScope(inner, p.params);
     this.#checkPermission(inner);
 
     const driver = this.#streamDrivers.get(inner) ?? this.#builtinStreamDriver(inner);
@@ -1037,6 +1185,12 @@ export class MockHost implements MockHostHandle {
       case 'ui.openExternal':
         this.#requireString(p, 'url', method);
         return {};
+      case 'ui.setKeepScreenOn':
+        if (typeof p['enabled'] !== 'boolean') {
+          throw new WireFailure('E_INVALID_PARAMS', 'ui.setKeepScreenOn requires a boolean "enabled"');
+        }
+        this.#keepScreenOn = p['enabled'];
+        return {};
 
       // storage ----------------------------------------------------------------
       case 'storage.get': {
@@ -1094,7 +1248,45 @@ export class MockHost implements MockHostHandle {
           longitude: 106.816 + this.#rand() * 0.01,
           accuracy: 8 + this.#rand() * 10,
           timestamp: Date.now(),
+          isMocked: false,
         };
+      case 'location.startTracking': {
+        // Strict here, unlike getCurrent/watch: a typo would otherwise run a
+        // whole trip at the wrong precision without anyone noticing.
+        if ('accuracy' in p && !['coarse', 'balanced', 'high'].includes(p['accuracy'] as string)) {
+          throw new WireFailure('E_INVALID_PARAMS', 'location.startTracking: accuracy must be coarse, balanced or high');
+        }
+        this.#optionalInt(p, 'minDistanceMeters', method, 0);
+        // An ended session is handed back, never replaced: replacing it would
+        // wipe fixes the page has not read.
+        if (this.#tracking) return this.#describeTracking(this.#tracking, true);
+
+        const startedAt = Date.now();
+        const tracking: MockTracking = {
+          trackingId: `trk-${++this.#seq}`,
+          startedAt,
+          expiresAt: startedAt + this.#limits.maxTrackingMs,
+          state: 'active',
+          log: new TrackLog(this.#limits.maxTrackedFixes),
+          expiry: undefined,
+          cooldown: undefined,
+          nudgeOwed: false,
+        };
+        tracking.expiry = setTimeout(() => this.#endTracking('expired'), this.#limits.maxTrackingMs);
+        for (let i = 0; i < TRACK_FIXTURE_FIXES; i++) tracking.log.record(this.#trackFix({ timestamp: startedAt + i }));
+        this.#tracking = tracking;
+        return this.#describeTracking(tracking, false);
+      }
+      case 'location.readTrack': {
+        const tracking = this.#requireTracking(p, method);
+        const afterSeq = this.#optionalInt(p, 'afterSeq', method, 0) ?? 0;
+        const limit = this.#optionalInt(p, 'limit', method, 1, 500) ?? 200;
+        return { ...tracking.log.read(afterSeq, limit), state: tracking.state };
+      }
+      case 'location.stopTracking':
+        this.#requireTracking(p, method);
+        this.#disposeTracking();
+        return {};
 
       // camera --------------------------------------------------------------------
       case 'camera.capture':
@@ -1371,6 +1563,16 @@ export class MockHost implements MockHostHandle {
     const v = p[key];
     if (typeof v !== 'string' || v.length === 0) {
       throw new WireFailure('E_INVALID_PARAMS', `${method} requires string "${key}"`);
+    }
+    return v;
+  }
+
+  /** An integer within [min, max], or undefined when absent. Anything else is the caller's bug. */
+  #optionalInt(p: Record<string, unknown>, key: string, method: string, min: number, max = Number.MAX_SAFE_INTEGER): number | undefined {
+    const v = p[key];
+    if (v === undefined || v === null) return undefined;
+    if (typeof v !== 'number' || !Number.isInteger(v) || v < min || v > max) {
+      throw new WireFailure('E_INVALID_PARAMS', `${method}: "${key}" must be an integer between ${min} and ${max}`);
     }
     return v;
   }

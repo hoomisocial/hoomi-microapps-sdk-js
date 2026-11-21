@@ -1,0 +1,12 @@
+{
+  "name": "ui.setKeepScreenOn rejects a string for enabled",
+  "protocol": 1,
+  "method": "ui.setKeepScreenOn",
+  "params": {
+    "enabled": "true"
+  },
+  "expect": {
+    "ok": false,
+    "errorCode": "E_INVALID_PARAMS"
+  }
+}

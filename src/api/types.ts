@@ -113,14 +113,78 @@ export interface IdTokenResult {
 // location
 // ---------------------------------------------------------------------------
 
+/**
+ * How precise a fix to ask for. `'high'` is the precise mode — GPS-grade,
+ * what navigation and ride-hailing need — and requires the `location.fine`
+ * scope on top of ordinary location access.
+ */
+export type LocationAccuracy = 'coarse' | 'balanced' | 'high';
+
 export interface LocationParams {
-  accuracy?: 'coarse' | 'fine';
+  /**
+   * `'fine'` is a legacy value the host has never recognised: it is sent
+   * unchanged and behaves as `'balanced'`. It is kept so existing apps do not
+   * change behaviour; use `'high'` for precise fixes.
+   */
+  accuracy?: LocationAccuracy | 'fine';
   maximumAgeMs?: number;
 }
 
 export interface LocationWatchParams extends LocationParams {
   minIntervalMs?: number;
+  /** Only report a fix once the device has moved this far. Integer, >= 0. */
+  minDistanceMeters?: number;
+  /** @deprecated Renamed to `minDistanceMeters`, which is what the host reads. */
   minDistanceM?: number;
+}
+
+export interface StartTrackingParams {
+  /** Default `'balanced'`. `'high'` needs the `location.fine` scope. */
+  accuracy?: LocationAccuracy;
+  /** Only record a fix once the device has moved this far. Integer >= 0, default 25. */
+  minDistanceMeters?: number;
+}
+
+/**
+ * `'active'` while recording. `'expired'` (the host's time limit passed) and
+ * `'failed'` (the location source died — GPS off, permission revoked) both
+ * mean recording has stopped and what was recorded is still readable.
+ * Open-ended so a state from a newer host never throws.
+ */
+export type TrackingState = 'active' | 'expired' | 'failed' | (string & {});
+
+export interface TrackingSession {
+  /** Opaque. Do not parse it. */
+  trackingId: string;
+  startedAt: number;
+  /** The host stops recording at this time whatever the app does. */
+  expiresAt: number;
+  /** Unread fixes the host holds before it starts evicting the oldest. */
+  maxBufferedFixes: number;
+  state: TrackingState;
+  /** True when an existing session was returned instead of a new one started. */
+  resumed: boolean;
+}
+
+export interface ReadTrackParams {
+  trackingId: string;
+  /**
+   * Return fixes with `seq` greater than this. It also acknowledges: the host
+   * discards everything at or before it. Integer >= 0, default 0.
+   */
+  afterSeq?: number;
+  /** Integer 1–500, default 200. */
+  limit?: number;
+}
+
+export interface ReadTrackResult {
+  fixes: TrackedFix[];
+  /** Highest `seq` recorded so far, read or not. */
+  lastSeq: number;
+  hasMore: boolean;
+  /** Fixes the host evicted before they were read. Cumulative. */
+  droppedCount: number;
+  state: TrackingState;
 }
 
 export interface GeoPosition {
@@ -131,7 +195,15 @@ export interface GeoPosition {
   heading?: number;
   speed?: number;
   timestamp?: number;
+  /** True when the fix came from a mock location provider. */
+  isMocked?: boolean;
   [key: string]: unknown;
+}
+
+/** A fix from a tracking session: a `GeoPosition` plus its place in the log. */
+export interface TrackedFix extends GeoPosition {
+  /** Starts at 1 and rises by one per recorded fix. */
+  seq: number;
 }
 
 // ---------------------------------------------------------------------------

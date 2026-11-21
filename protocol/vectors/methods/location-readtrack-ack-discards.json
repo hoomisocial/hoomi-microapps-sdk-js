@@ -1,0 +1,35 @@
+{
+  "name": "location.readTrack discards fixes the cursor has acknowledged",
+  "protocol": 1,
+  "method": "location.readTrack",
+  "params": {
+    "trackingId": "$trackingId",
+    "afterSeq": 0
+  },
+  "setup": [
+    {
+      "method": "location.startTracking",
+      "params": {},
+      "bind": {
+        "trackingId": "trackingId"
+      }
+    },
+    {
+      "method": "location.readTrack",
+      "params": {
+        "trackingId": "$trackingId",
+        "afterSeq": 2
+      }
+    }
+  ],
+  "expect": {
+    "ok": true,
+    "result": {
+      "fixes": [
+        {
+          "seq": 3
+        }
+      ]
+    }
+  }
+}
