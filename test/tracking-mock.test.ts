@@ -116,6 +116,13 @@ describe('mock location tracking', () => {
     expect(await codeOf(t.hoomi.call('location.getCurrent', { accuracy: 'fine' }))).toBe('OK');
   });
 
+  it('lets the user decline the consent sheet', async () => {
+    const t = make();
+    t.host.applyScenario('cancel-everything');
+    expect(await codeOf(t.hoomi.call('location.startTracking', {}))).toBe('E_USER_DENIED');
+    expect(() => t.host.pushTrackFix()).toThrow(/not tracking/i);
+  });
+
   it('surfaces a permanently denied OS permission', async () => {
     const t = make({ permissions: { location: 'denied_forever' } });
     expect(await codeOf(t.hoomi.call('location.startTracking', {}))).toBe('E_PERMISSION_DENIED_FOREVER');

@@ -45,18 +45,54 @@ export interface TrackingRawApi {
   stopTracking(trackingId: string, opts?: CallOptions): Promise<void>;
 }
 
-const PAGE_SIZE = 200;
+/**
+ * The host's maximum. A drain after a long background stretch is many reads
+ * back to back, and the host rate-limits them, so each one carries as much as
+ * it is allowed to.
+ */
+const PAGE_SIZE = 500;
+/** Wait before re-reading after a transient failure, unless the host says how long. */
+const RETRY_MS = 1_000;
 
 export function createLocationTracker(client: BridgeClient, raw: TrackingRawApi) {
+  // One tracker per page. The host keeps a single log per micro-app, so two
+  // trackers would each acknowledge fixes the other had not seen yet, and the
+  // first to stop would end the session under the second.
+  let busy = false;
+
   return async function track(
     params: StartTrackingParams | undefined,
     observer: SubscriptionObserver<TrackedFix> | ((fix: TrackedFix) => void),
     opts: TrackOptions = {},
   ): Promise<TrackingHandle> {
+    if (busy) {
+      throw new HoomiError('E_INVALID_PARAMS', 'location.track: already tracking — stop() the existing handle first');
+    }
+    busy = true;
+    try {
+      return await attach(params, observer, opts, () => {
+        busy = false;
+      });
+    } catch (err) {
+      busy = false;
+      throw err;
+    }
+  };
+
+  async function attach(
+    params: StartTrackingParams | undefined,
+    observer: SubscriptionObserver<TrackedFix> | ((fix: TrackedFix) => void),
+    opts: TrackOptions,
+    onReleased: () => void,
+  ): Promise<TrackingHandle> {
     const o: SubscriptionObserver<TrackedFix> = typeof observer === 'function' ? { next: observer } : observer;
     const { onDropped, signal, timeoutMs } = opts;
     const callOpts: CallOptions = timeoutMs === undefined ? {} : { timeoutMs };
-    const startOpts: CallOptions = signal ? { ...callOpts, signal } : callOpts;
+    // The host holds startTracking open while the user reads the consent
+    // sheet. The SDK's default timeout would give up first and leave GPS
+    // running on the host with no handle here to stop it, so the start only
+    // times out if the caller asked for that.
+    const startOpts: CallOptions = { timeoutMs: timeoutMs ?? 0, ...(signal ? { signal } : {}) };
 
     let lastDelivered = 0;
     let droppedSeen = 0;
@@ -104,10 +140,15 @@ export function createLocationTracker(client: BridgeClient, raw: TrackingRawApi)
     let stopped = false;
     let draining = false;
     let drainAgain = false;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    let hostStopped = false;
     const detach: Array<() => void> = [];
     const release = () => {
       stopped = true;
+      if (retry !== undefined) clearTimeout(retry);
+      retry = undefined;
       for (const off of detach.splice(0)) off();
+      onReleased();
     };
 
     const drain = async (): Promise<void> => {
@@ -130,7 +171,10 @@ export function createLocationTracker(client: BridgeClient, raw: TrackingRawApi)
         // Recording ended on the host and everything recorded has been
         // delivered. Free the host's log, then tell the page why.
         release();
-        await raw.stopTracking(trackingId, callOpts).catch(() => undefined);
+        hostStopped = await raw.stopTracking(trackingId, callOpts).then(
+          () => true,
+          () => false,
+        );
         if (state === 'expired') {
           o.complete?.();
         } else {
@@ -146,10 +190,24 @@ export function createLocationTracker(client: BridgeClient, raw: TrackingRawApi)
         if (err instanceof HoomiError && err.code === 'E_INVALID_PARAMS') {
           // The session no longer exists on the host. Nothing more can come.
           release();
-          o.error?.(err);
+          try {
+            o.error?.(err);
+          } catch {
+            /* the page's callback threw; there is no one left to tell */
+          }
+          return;
         }
-        // Anything else is transient: the cursor has not moved, so the next
-        // trigger reads the same fixes again.
+        // Anything else is transient — a rate limit partway through a long
+        // backlog, a timeout. The cursor has not moved, so reading again loses
+        // nothing; and it has to happen on a timer, because a session that has
+        // already ended will never send another hint.
+        if (retry === undefined) {
+          const wait = (err as { retryAfterMs?: unknown } | null)?.retryAfterMs;
+          retry = setTimeout(() => {
+            retry = undefined;
+            void drain();
+          }, typeof wait === 'number' ? wait : RETRY_MS);
+        }
       } finally {
         draining = false;
       }
@@ -163,18 +221,30 @@ export function createLocationTracker(client: BridgeClient, raw: TrackingRawApi)
     );
 
     const stop = async (): Promise<void> => {
-      if (stopped) return;
-      release();
-      await raw.stopTracking(trackingId, callOpts);
+      if (!stopped) release();
+      // Kept separate from `stopped`: if this call does not reach the host,
+      // GPS is still on, and the next stop() has to try again rather than
+      // conclude there is nothing left to do.
+      if (hostStopped) return;
+      try {
+        await raw.stopTracking(trackingId, callOpts);
+      } catch (err) {
+        if (!(err instanceof HoomiError && err.code === 'E_INVALID_PARAMS')) throw err;
+        // The host no longer has the session: it is as stopped as it can be.
+      }
+      hostStopped = true;
     };
 
     if (signal) {
       const onAbort = () => void stop().catch(() => undefined);
-      signal.addEventListener('abort', onAbort, { once: true });
-      detach.push(() => signal.removeEventListener('abort', onAbort));
+      if (signal.aborted) onAbort();
+      else {
+        signal.addEventListener('abort', onAbort, { once: true });
+        detach.push(() => signal.removeEventListener('abort', onAbort));
+      }
     }
 
     void drain();
     return { trackingId, resumed, stop };
-  };
+  }
 }

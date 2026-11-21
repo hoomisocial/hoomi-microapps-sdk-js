@@ -85,13 +85,13 @@ describe('location.track', () => {
     const reads = countOf(t, 'location.readTrack');
 
     const wake = t.host.fail('location.readTrack', 'E_INTERNAL');
-    for (let i = 0; i < 450; i++) t.host.pushTrackFix();
+    for (let i = 0; i < 1100; i++) t.host.pushTrackFix();
     await tick(10);
     wake();
     t.host.emit('lifecycle.show', {});
 
-    await vi.waitFor(() => expect(seqs).toHaveLength(453));
-    expect(seqs).toEqual(Array.from({ length: 453 }, (_, i) => i + 1));
+    await vi.waitFor(() => expect(seqs).toHaveLength(1103));
+    expect(seqs).toEqual(Array.from({ length: 1103 }, (_, i) => i + 1));
     expect(countOf(t, 'location.readTrack') - reads).toBeGreaterThanOrEqual(3);
   });
 
@@ -224,6 +224,85 @@ describe('location.track', () => {
     await vi.waitFor(() => expect(countOf(t, 'location.stopTracking')).toBe(1));
     expect(() => t.host.pushTrackFix()).toThrow(/not tracking/i);
     expect(seqs).toEqual([1, 2, 3]);
+  });
+
+  it('retries a failed read on its own, without waiting for another hint', async () => {
+    const t = make();
+    const { seqs } = await startTracked(t);
+
+    const wake = t.host.fail('location.readTrack', 'E_RATE_LIMITED');
+    t.host.pushTrackFix();
+    await tick(10);
+    wake();
+    // No show, no further hint: the session could already have ended, in
+    // which case none would ever come.
+    await vi.waitFor(() => expect(seqs).toEqual([1, 2, 3, 4]), { timeout: 3000 });
+  });
+
+  it('a second stop() retries when the first could not reach the host', async () => {
+    const t = make();
+    const { handle } = await startTracked(t);
+
+    const heal = t.host.fail('location.stopTracking', 'E_INTERNAL');
+    await expect(handle.stop()).rejects.toBeInstanceOf(HoomiError);
+    heal();
+    await handle.stop();
+
+    expect(() => t.host.pushTrackFix()).toThrow(/not tracking/i);
+  });
+
+  it('refuses a second tracker while one is running', async () => {
+    const t = make();
+    const { handle } = await startTracked(t);
+
+    // Two trackers would share one host log and acknowledge each other's fixes.
+    const err = await t.hoomi.location.track(undefined, () => {}).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(HoomiError);
+    expect((err as Error).message).toMatch(/already tracking/i);
+
+    await handle.stop();
+    const again = await t.hoomi.location.track(undefined, () => {});
+    await again.stop();
+  });
+
+  it('waits for the consent sheet for as long as the user takes', async () => {
+    // The host holds startTracking open while the user reads the sheet. Timing
+    // out first would leave GPS running with no handle on the page.
+    const t = make({ sdk: { defaultTimeoutMs: 20 } });
+    t.host.on('location.startTracking', async () => {
+      await tick(80);
+      return { trackingId: 'trk-slow', startedAt: 0, expiresAt: 1, maxBufferedFixes: 10, state: 'active', resumed: false };
+    });
+    t.host.on('location.readTrack', () => ({ fixes: [], lastSeq: 0, hasMore: false, droppedCount: 0, state: 'active' }));
+    t.host.on('location.stopTracking', () => ({}));
+
+    const handle = await t.hoomi.location.track(undefined, () => {});
+    expect(handle.trackingId).toBe('trk-slow');
+    await handle.stop();
+  });
+
+  it('a throwing error callback does not become an unhandled rejection', async () => {
+    const t = make();
+    const unhandled = vi.fn();
+    process.on('unhandledRejection', unhandled);
+    try {
+      let called = 0;
+      await t.hoomi.location.track(undefined, {
+        error: () => {
+          called += 1;
+          throw new Error('page bug');
+        },
+      });
+      t.host.failTracking();
+      await vi.waitFor(() => expect(called).toBe(1));
+      await tick(20);
+      expect(unhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off('unhandledRejection', unhandled);
+    }
   });
 
   it('reports the session vanishing underneath it', async () => {

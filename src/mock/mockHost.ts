@@ -213,6 +213,8 @@ const INTERACTIVE_METHODS = new Set([
   'ble.requestDevice',
   'wallet.requestPayment',
   'ui.openExternal',
+  // The host asks the user every time a tracking session starts.
+  'location.startTracking',
 ]);
 
 const NETWORK_METHODS = new Set([

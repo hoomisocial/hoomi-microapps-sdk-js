@@ -110,6 +110,11 @@ when the user comes back. What to know:
 - **Limits are reported, not silent.** The host buffers 10,000 unread fixes
   (`onDropped` tells you if it had to evict any) and stops a session after 8
   hours (`complete`); call `track()` again to carry on.
+- **One tracker per page.** A second `track()` while one is running rejects;
+  `stop()` the first. If `stop()` itself rejects, call it again — GPS is still
+  on until it succeeds.
+- `track()` waits for the consent sheet for as long as the user takes; pass
+  `timeoutMs` only if you really want to give up on them.
 - `startTracking` / `readTrack` / `stopTracking` are the host calls underneath,
   if you want to manage the cursor yourself.
 
