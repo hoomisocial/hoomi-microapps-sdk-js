@@ -4,20 +4,25 @@ JavaScript SDK for **Hoomi micro-apps**: a typed bridge to the Hoomi superapp
 host over the `flutter_inappwebview` WebView bridge, with React bindings, a
 faithful mock host for laptop development, and test helpers.
 
-- **Core** `hoomi.microapps.js` — zero dependencies, no React, ~6 KB min+gzip, SSR-safe (never touches `window` at import time)
-- **React** `hoomi.microapps.js/react` — provider + hooks, StrictMode-correct
-- **Mock** `hoomi.microapps.js/mock` — an in-browser fake host that enforces the *real* host's constraints
-- **Testing** `hoomi.microapps.js/testing` — `createTestHoomi()`, no globals touched
+- **Core** `@hoomisocial/microapps-sdk-js` — zero dependencies, no React, ~6 KB min+gzip, SSR-safe (never touches `window` at import time)
+- **React** `@hoomisocial/microapps-sdk-js/react` — provider + hooks, StrictMode-correct
+- **Mock** `@hoomisocial/microapps-sdk-js/mock` — an in-browser fake host that enforces the *real* host's constraints
+- **Testing** `@hoomisocial/microapps-sdk-js/testing` — `createTestHoomi()`, no globals touched
+
+Besides the basics (profile, storage, wallet, camera, pages), it includes
+**background location tracking** for trips and deliveries — every GPS fix, in
+order, even while the phone is locked — see
+[Tracking a trip in the background](#tracking-a-trip-in-the-background).
 
 ```bash
-npm install hoomi.microapps.js
+npm install @hoomisocial/microapps-sdk-js
 # react is an optional peer dependency — only needed for /react
 ```
 
 ## Quickstart
 
 ```ts
-import { getHoomi, HoomiError, PermissionDeniedError, UserCancelledError } from 'hoomi.microapps.js';
+import { getHoomi, HoomiError, PermissionDeniedError, UserCancelledError } from '@hoomisocial/microapps-sdk-js';
 
 const hoomi = getHoomi();          // reads the host bootstrap, starts the handshake
 await hoomi.ready();               // host.hello completed
@@ -64,7 +69,13 @@ const sub = await hoomi.location.watch({ minIntervalMs: 2000 }, (pos) => draw(po
 await sub.close();
 ```
 
-### Location: accuracy, and tracking in the background (protocol v1)
+### Location (protocol v1)
+
+| method | what it is for |
+| --- | --- |
+| `location.getCurrent(params?)` | one fix, now |
+| `location.watch(params?, observer)` | a live stream while your page is on screen |
+| `location.track(params?, observer, opts?)` | **every** fix for a whole trip, including while Hoomi is in the background |
 
 `accuracy` is `'coarse' | 'balanced' | 'high'`. **`'high'` is the precise
 mode** — GPS-grade, what navigation and ride-hailing need — and it requires the
@@ -74,15 +85,30 @@ behaves as `'balanced'`, and it is left that way so existing apps do not change
 behaviour. The distance filter is `minDistanceMeters` (the old `minDistanceM`
 is translated for you).
 
+```ts
+const here = await hoomi.location.getCurrent({ accuracy: 'high' });
+
+const sub = await hoomi.location.watch({ accuracy: 'high', minDistanceMeters: 5 }, (pos) => map.moveTo(pos));
+await sub.close();
+```
+
+A position is `{ latitude, longitude, accuracy, timestamp, altitude?, heading?,
+speed?, isMocked }` — `accuracy` in metres, `timestamp` in epoch milliseconds,
+and `isMocked` true when the fix came from a mock-location provider (worth
+checking in a ride or delivery app).
+
+### Tracking a trip in the background
+
 `location.watch` only delivers while your page is running, and a page stops
-running when the user locks the phone or switches apps. For a trip, a delivery
-or a run, use `location.track`:
+running when the user locks the phone or switches apps. A driver does both.
+`location.track` is for that: the host records fixes natively, keeps Hoomi
+alive to do it, and hands your page the whole backlog, in order, when it wakes.
 
 ```ts
 const tracking = await hoomi.location.track(
   { accuracy: 'high', minDistanceMeters: 10 },
   {
-    next: (fix) => trip.add(fix),        // every fix, in order: { seq, latitude, longitude, ... }
+    next: (fix) => trip.add(fix),          // every fix, in order: { seq, latitude, longitude, ... }
     error: (err) => showTrackingLost(err), // E_UNAVAILABLE: GPS switched off, permission revoked
     complete: () => showTrackingEnded(),   // the host's time limit was reached
   },
@@ -93,34 +119,162 @@ const tracking = await hoomi.location.track(
 await tracking.stop();
 ```
 
-The host records fixes natively and keeps Hoomi alive to do it (a foreground
-service and notification on Android, background location on iOS). Your page
-receives them live while it is awake, and receives the whole backlog, in order,
-when the user comes back. What to know:
+**What the user sees.** A consent sheet every time tracking starts ("*App*
+will keep receiving your location while Hoomi is in the background, until you
+close it"), then an ongoing notification on Android or the location indicator
+on iOS for as long as it runs.
 
-- **Scopes:** `location.background`, plus `location.fine` for `'high'`.
-- **The user is asked every time tracking starts**, and can see it is on.
+**What your manifest needs.** The `location.background` scope, plus
+`location.fine` if you ask for `'high'`.
+
+#### A complete example: a ride-hailing trip
+
+```ts
+import {
+  getHoomi,
+  HoomiError,
+  PermissionDeniedError,
+  ScopeNotGrantedError,
+  UnsupportedError,
+  UserCancelledError,
+  type TrackedFix,
+  type TrackingHandle,
+} from '@hoomisocial/microapps-sdk-js';
+
+const hoomi = getHoomi();
+let tracking: TrackingHandle | null = null;
+let outbox: TrackedFix[] = [];
+
+/** Call from the "Start trip" button — the consent sheet needs a user who expects it. */
+export async function startTrip(tripId: string) {
+  try {
+    tracking = await hoomi.location.track(
+      { accuracy: 'high', minDistanceMeters: 10 },
+      {
+        next: (fix) => {
+          drawOnMap(fix);
+          outbox.push(fix); // after a locked-phone stretch these arrive in a burst
+        },
+        error: (err) => showBanner(err.retryable ? 'Location lost — tap to resume' : 'Tracking stopped'),
+        complete: () => void startTrip(tripId), // 8-hour limit reached: carry on (asks the user again)
+      },
+      { onDropped: (count) => reportGap(tripId, count) },
+    );
+    await hoomi.storage.set('activeTripId', tripId);
+    await hoomi.ui.setKeepScreenOn(true); // the driver is following a route
+  } catch (err) {
+    if (err instanceof UserCancelledError) return; // declined the sheet — leave the button as it was
+    if (err instanceof PermissionDeniedError) {
+      return err.permanent ? showOpenSettings() : showRetry();
+    }
+    if (err instanceof ScopeNotGrantedError) return showBanner('This app is not allowed to track location');
+    if (err instanceof UnsupportedError) return showBanner('Update Hoomi to use trip tracking');
+    if (err instanceof HoomiError) return report(err.code);
+    throw err;
+  }
+}
+
+// The host never sends fixes to a server. Forwarding them is your app's job.
+setInterval(async () => {
+  if (outbox.length === 0) return;
+  const batch = outbox;
+  outbox = [];
+  try {
+    await fetch('/api/trips/current/fixes', { method: 'POST', body: JSON.stringify(batch) });
+  } catch {
+    outbox = batch.concat(outbox); // offline: keep them and try again
+  }
+}, 5_000);
+
+export async function endTrip() {
+  await hoomi.ui.setKeepScreenOn(false);
+  await tracking?.stop(); // if this rejects, call it again: GPS is still on until it succeeds
+  tracking = null;
+  await hoomi.storage.remove('activeTripId');
+}
+```
+
+After a reload — or the page being evicted and restored — call `startTrip`
+again on load if a trip is in progress. `track()` re-attaches to the session
+that is still running on the host, shows no second consent sheet, and
+`tracking.resumed` is `true`:
+
+```ts
+const activeTripId = await hoomi.storage.get<string>('activeTripId');
+if (activeTripId) await startTrip(activeTripId);
+```
+
+#### How it behaves
+
 - **It ends when the micro-app is closed.** It does not continue after that,
-  and the host never sends fixes anywhere but to your page — forward them to
-  your backend yourself.
-- **It survives a reload.** Call `track()` again and you re-attach to the same
-  session (`tracking.resumed === true`) with no second prompt. Fixes the old
-  page had received but not yet acknowledged arrive again, so delivery across a
-  reload is at-least-once; `fix.seq` identifies a repeat.
-- **Limits are reported, not silent.** The host buffers 10,000 unread fixes
-  (`onDropped` tells you if it had to evict any) and stops a session after 8
-  hours (`complete`); call `track()` again to carry on.
+  and the host never sends fixes anywhere but to your page.
+- **Nothing is lost while the page sleeps.** Fixes taken with the phone locked
+  or another app in front are held by the host and delivered, in order, the
+  moment your page is running again.
+- **Delivery across a reload is at-least-once.** Fixes the old page had
+  received but not yet acknowledged arrive again. `fix.seq` starts at 1 and
+  rises by one per fix, so it identifies a repeat — make your server's insert
+  idempotent on `(tripId, seq)`.
+- **Limits are reported, not silent.** The host buffers 10,000 unread fixes —
+  about 100 km at a 10 m filter — and `onDropped` tells you if it had to evict
+  any. A session stops after 8 hours and `complete` fires; call `track()`
+  again to carry on.
 - **One tracker per page.** A second `track()` while one is running rejects;
-  `stop()` the first. If `stop()` itself rejects, call it again — GPS is still
-  on until it succeeds.
-- `track()` waits for the consent sheet for as long as the user takes; pass
-  `timeoutMs` only if you really want to give up on them.
-- `startTracking` / `readTrack` / `stopTracking` are the host calls underneath,
-  if you want to manage the cursor yourself.
+  `stop()` the first.
+- **`track()` waits for the consent sheet** for as long as the user takes;
+  pass `timeoutMs` only if you really want to give up on them.
+- **A callback that throws does not stop delivery.** The next fix still
+  arrives.
 
-To keep the display awake while your app is in front — a driver following a
-route — call `hoomi.ui.setKeepScreenOn(true)`. The host releases it whenever
-your app is hidden or closed. It needs the `ui.keepScreenOn` scope in the
+#### The calls underneath
+
+`track()` is a wrapper. If you would rather manage the cursor yourself:
+
+| method | params | result |
+| --- | --- | --- |
+| `location.startTracking` | `{ accuracy?, minDistanceMeters? }` | `{ trackingId, startedAt, expiresAt, maxBufferedFixes, state, resumed }` |
+| `location.readTrack` | `{ trackingId, afterSeq?, limit? }` — `limit` 1–500, default 200 | `{ fixes, lastSeq, hasMore, droppedCount, state }` |
+| `location.stopTracking` | `trackingId` | — |
+
+```ts
+const { trackingId } = await hoomi.location.startTracking({ accuracy: 'high' });
+
+let cursor = 0;
+async function drain() {
+  let page;
+  do {
+    page = await hoomi.location.readTrack({ trackingId, afterSeq: cursor, limit: 500 });
+    for (const fix of page.fixes) {
+      handle(fix);
+      cursor = fix.seq;
+    }
+  } while (page.hasMore);
+  return page.state; // 'active' | 'expired' | 'failed'
+}
+
+hoomi.on('location.trackAvailable', () => void drain()); // a hint — it may never arrive
+hoomi.onShow(() => void drain());                        // so also read when the page wakes
+```
+
+**Reading is acknowledging**: `readTrack` discards everything at or before
+`afterSeq`, so pass the last `seq` you have safely processed, not the last one
+you received. `state` becomes `'expired'` (time limit) or `'failed'` (GPS off,
+permission revoked) when recording stops; the log stays readable, and you call
+`stopTracking` once you have drained it. `startTracking` while a session
+exists returns that session with `resumed: true` — including one that has
+already ended, which is never replaced for you because that would wipe fixes
+you have not read.
+
+### Keeping the screen on
+
+```ts
+await hoomi.ui.setKeepScreenOn(true);
+```
+
+Keeps the display awake while your app is in front — a driver following a
+route. The host releases it whenever your app is hidden or closed and takes it
+back when the app returns, so there is nothing to clean up; pass `false` to
+let the screen sleep again. It needs the `ui.keepScreenOn` scope in the
 manifest and never prompts.
 
 ### Wallet payloads (protocol v1)
@@ -261,7 +415,7 @@ Everything that rejects across the public API is a `HoomiError` — never a bare
 ## React
 
 ```tsx
-import { HoomiProvider, useUser, useLaunchOptions, useLocationWatch, useBackButton } from 'hoomi.microapps.js/react';
+import { HoomiProvider, useUser, useLaunchOptions, useLocationWatch, useBackButton } from '@hoomisocial/microapps-sdk-js/react';
 
 createRoot(el).render(
   <HoomiProvider>
@@ -284,10 +438,46 @@ All hooks survive React 18/19 StrictMode double-invoked effects: subscriptions
 that resolve after cleanup are closed, in-flight calls abort on unmount, and
 handlers live in refs so re-renders never re-register bridge subscriptions.
 
+There is no hook for `location.track` yet. Start it from an event handler and
+keep the handle in a ref — not from an effect, which StrictMode runs twice and
+which would show the user a consent sheet they did not ask for:
+
+```tsx
+function TripButton() {
+  const hoomi = useHoomi();
+  const tracking = useRef<TrackingHandle | null>(null);
+  const [fixes, setFixes] = useState<TrackedFix[]>([]);
+  const [active, setActive] = useState(false);
+
+  const start = async () => {
+    tracking.current = await hoomi.location.track(
+      { accuracy: 'high', minDistanceMeters: 10 },
+      {
+        next: (fix) => setFixes((all) => [...all, fix]),
+        error: () => setActive(false),
+        complete: () => setActive(false),
+      },
+    );
+    setActive(true);
+  };
+
+  const stop = async () => {
+    await tracking.current?.stop();
+    tracking.current = null;
+    setActive(false);
+  };
+
+  return <button onClick={active ? stop : start}>{active ? 'End trip' : 'Start trip'}</button>;
+}
+```
+
+Unmounting this component does not stop tracking — the trip belongs to the
+micro-app, not to a button. Call `stop()` when the trip ends.
+
 ## Developing without the superapp: the mock host
 
 ```ts
-import { installMockHost } from 'hoomi.microapps.js/mock';
+import { installMockHost } from '@hoomisocial/microapps-sdk-js/mock';
 
 const host = installMockHost({
   appId: 'app.example.cafe',
@@ -313,7 +503,9 @@ http://localhost:5173/?hoomi_scenario=deny-forever&hoomi_latency=1200
 The returned handle: `on(method, handler)`, `onStream(method, driver)`,
 `fail(method, code)`, `delay(ms)`, `setScopes/grant/revoke`,
 `setPermission(domain, state)`, `setPages(seed)` (which storefront pages the
-signed-in user owns), `setEpoch(n, announce?)`, `emit(event, data)`,
+signed-in user owns), `pushTrackFix(fix?)` / `expireTracking()` /
+`failTracking()` (drive a tracking session), `keepScreenOn` (what the page
+last asked for), `setEpoch(n, announce?)`, `emit(event, data)`,
 `pressBack()`, `waitFor(method)`, `frames` (wire log), `applyScenario(name)`,
 `reset()`, `uninstall()`. Throw `mockError('E_UNAUTHENTICATED')` inside an
 override to fail with a specific code.
@@ -321,7 +513,7 @@ override to fail with a specific code.
 ## Testing your micro-app
 
 ```ts
-import { createTestHoomi } from 'hoomi.microapps.js/testing';
+import { createTestHoomi } from '@hoomisocial/microapps-sdk-js/testing';
 
 const { hoomi, host, cleanup } = createTestHoomi({ scenario: 'deny-forever' });
 await expect(hoomi.location.getCurrent()).rejects.toMatchObject({ code: 'E_PERMISSION_DENIED_FOREVER' });
@@ -329,6 +521,31 @@ cleanup();
 ```
 
 No globals touched — safe in Node and in parallel test workers.
+
+Tracking is testable without a phone. A mock session starts with three fixes
+already recorded, and you move the device yourself:
+
+```ts
+const { hoomi, host, cleanup } = createTestHoomi();
+const seen: number[] = [];
+
+const tracking = await hoomi.location.track({ accuracy: 'high' }, (fix) => seen.push(fix.seq));
+await vi.waitFor(() => expect(seen).toEqual([1, 2, 3]));
+
+host.pushTrackFix({ latitude: -6.21, longitude: 106.82 }); // the device moved
+await vi.waitFor(() => expect(seen).toEqual([1, 2, 3, 4]));
+
+host.failTracking();   // GPS switched off → your `error` callback, code E_UNAVAILABLE
+// host.expireTracking() → your `complete` callback
+cleanup();
+```
+
+To test what your app does when it is refused: `host.revoke('location.background')`
+(→ `E_SCOPE_DENIED`), `createTestHoomi({ scenario: 'cancel-everything' })`
+(the user declines the consent sheet → `E_USER_DENIED`), or
+`{ scenario: 'deny-forever' }` (the OS permission → `E_PERMISSION_DENIED_FOREVER`).
+A small buffer makes the overflow path easy to reach:
+`createTestHoomi({ limits: { maxTrackedFixes: 2 } })`.
 
 ## Example app
 
@@ -368,7 +585,7 @@ cd examples/react-vite && npm install && npm run dev
 
 ```bash
 npm install
-npm test          # vitest: 241 tests incl. fast-check property tests + 39 protocol method vectors
+npm test          # vitest: 288 tests incl. fast-check property tests + 54 protocol method vectors
 npm run build     # ESM+CJS multi-entry, IIFE global, .d.ts
 npm run size      # size + tree-shaking gate (core ≤ 12 KB min+gzip)
 ```

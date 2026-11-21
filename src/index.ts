@@ -82,3 +82,4 @@ export type {
 } from './api/namespaces.js';
 
 export type * from './api/types.js';
+export type { TrackOptions, TrackingHandle } from './api/tracking.js';
