@@ -1,6 +1,6 @@
 {
   "name": "@hoomisocial/microapps-sdk-js",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "JavaScript SDK for Hoomi micro-apps: typed bridge to the Hoomi superapp host over the WebView bridge, with React bindings, a mock host, and testing helpers.",
   "license": "MIT",
   "type": "module",
